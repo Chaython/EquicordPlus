@@ -10,7 +10,7 @@ You can join our [discord server](https://discord.gg/5Xh2W87egW) for commits, ch
 
 ### Extra included plugins
 <details>
-<summary>126 additional plugins</summary>
+<summary>132 additional plugins</summary>
 
 - AllCallTimers by MaxHerbold & D3SOX
 - AltKrispSwitch by newwares
@@ -20,6 +20,7 @@ You can join our [discord server](https://discord.gg/5Xh2W87egW) for commits, ch
 - DecodeBase64 by ThePirateStoner
 - BetterActivities by D3SOX, Arjix, AutumnVN
 - BetterBanReasons by Inbestigator
+- BetterInvites by iamme
 - BetterQuickReact by Ven & Sqaaakoi
 - BetterUserArea by Samwich
 - BlockKeywords by catcraft
@@ -34,6 +35,8 @@ You can join our [discord server](https://discord.gg/5Xh2W87egW) for commits, ch
 - CuteAnimeBoys by ShadyGoat
 - CuteNekos by echo
 - CutePats by thororen
+- ChannelBadges by Creations
+- CharacterCounter by Creations
 - Demonstration by Samwich
 - DisableCameras by Joona
 - DoNotLeak by Perny
@@ -52,7 +55,7 @@ You can join our [discord server](https://discord.gg/5Xh2W87egW) for commits, ch
 - Glide by Samwich
 - GlobalBadges by HypedDomi & Hosted by Wolfie
 - GodMode by Tolgchu
-- GoodPerson by nin0dev
+- GoodPerson by nin0dev & mantikafasi
 - GoogleThat by Samwich
 - Grammar by Samwich
 - GrammarFix by unstream
@@ -67,7 +70,7 @@ You can join our [discord server](https://discord.gg/5Xh2W87egW) for commits, ch
 - InRole by nin0dev
 - IrcColors by Grzesiek11
 - IRememberYou by zoodogood
-- ImagePreview by Creation's
+- ImagePreview by Creations
 - Jumpscare by Surgedevs
 - JumpToStart by Samwich
 - KeyboardSounds by HypedDomi
@@ -82,6 +85,7 @@ You can join our [discord server](https://discord.gg/5Xh2W87egW) for commits, ch
 - MessageLoggerEnhanced by Aria
 - MessageTranslate by Samwich
 - ModalFade by Kyuuhachi
+- MoreStickers by Leko & Arjix
 - NewPluginsManager by Sqaaakoi
 - NoAppsAllowed by kvba
 - NoBulletPoints by Samwich
@@ -95,6 +99,7 @@ You can join our [discord server](https://discord.gg/5Xh2W87egW) for commits, ch
 - OnePingPerDM by ProffDea
 - PlatformSpoofer by Drag
 - PurgeMessages by bhop & nyx
+- PinIcon by iamme
 - QuestCompleter by HappyEnderman & SerStars (Maintained by thororen)
 - QuestionMarkReplacement by nyx
 - Quoter by Samwich
@@ -105,10 +110,12 @@ You can join our [discord server](https://discord.gg/5Xh2W87egW) for commits, ch
 - ScreenRecorder by AutumnVN (Vesktop & Equibop only)
 - SearchFix by Jaxx
 - SekaiStickers by MaiKokain
+- SidebarChat by Joona
 - Shakespearean by vmohammad (Dev build only)
 - ShowBadgesInChat by Inbestigator & KrystalSkull
 - Slap by Korbo
 - SoundBoardLogger by Moxxie, fres, echo (Maintained by thororen)
+- StatusPresets by iamme
 - StatusWhilePlaying by thororen (Desktop app only)
 - SteamStatusSync by niko
 - StickerBlocker by Samwich

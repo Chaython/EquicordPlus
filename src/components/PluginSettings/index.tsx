@@ -328,6 +328,46 @@ export default function PluginSettings() {
         }
     }
 
+    function resetCheckAndDo() {
+        let restartNeeded = false;
+
+        for (const plugin of enabledPlugins) {
+            const pluginSettings = settings.plugins[plugin];
+
+            if (Plugins[plugin].patches?.length) {
+                pluginSettings.enabled = false;
+                changes.handleChange(plugin);
+                restartNeeded = true;
+                continue;
+            }
+
+            const result = stopPlugin(Plugins[plugin]);
+
+            if (!result) {
+                logger.error(`Error while stopping plugin ${plugin}`);
+                showErrorToast(`Error while stopping plugin ${plugin}`);
+                continue;
+            }
+
+            pluginSettings.enabled = false;
+        }
+
+        if (restartNeeded) {
+            Alerts.show({
+                title: "Restart Required",
+                body: (
+                    <>
+                        <p style={{ textAlign: "center" }}>Some plugins require a restart to fully disable.</p>
+                        <p style={{ textAlign: "center" }}>Would you like to restart now?</p>
+                    </>
+                ),
+                confirmText: "Restart Now",
+                cancelText: "Later",
+                onConfirm: () => location.reload()
+            });
+        }
+    }
+
     // Code directly taken from supportHelper.tsx
     const isApiPlugin = (plugin: string) => plugin.endsWith("API") || Plugins[plugin].required;
 
@@ -386,6 +426,48 @@ export default function PluginSettings() {
             </div>
 
             <Forms.FormTitle className={Margins.top20}>Plugins</Forms.FormTitle>
+            {enabledPlugins.length > 0 && (
+                <Button
+                    size={Button.Sizes.SMALL}
+                    className="button-danger-background"
+                    onClick={() => {
+                        if (Settings.ignoreResetWarning) return resetCheckAndDo();
+
+                        return Alerts.show({
+                            title: "Disable All Plugins",
+                            body: (
+                                <div className="alert-body">
+                                    <img
+                                        src="https://media.tenor.com/Y6DXKZiBCs8AAAAi/stavario-josefbenes.gif"
+                                        alt="Warning"
+                                    />
+                                    <p className="warning-text">
+                                        WARNING: You are about to disable <span>{enabledPlugins.length}</span> plugins!
+                                    </p>
+                                    <p>
+                                        Are you absolutely sure you want to proceed? You can always enable them back later.
+                                    </p>
+                                    {!Settings.ignoreResetWarning && (
+                                        <Button className="disable-warning" onClick={() => {
+                                            Settings.ignoreResetWarning = true;
+                                        }}>
+                                            Disable this warning forever
+                                        </Button>
+                                    )}
+                                </div>
+                            ),
+                            confirmText: "Disable All",
+                            confirmColor: "button-danger-background-no-margin",
+                            cancelText: "Cancel",
+                            onConfirm: () => {
+                                resetCheckAndDo();
+                            }
+                        });
+                    }}
+                >
+                    Disable All Plugins
+                </Button>
+            )}
 
             {plugins.length || requiredPlugins.length
                 ? (

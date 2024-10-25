@@ -67,6 +67,7 @@ function getMessageFlags(selfInChannel: boolean) {
 
 function sendVoiceStatusMessage(channelId: string, content: string, userId: string, selfInChannel: boolean): Message | null {
     if (!channelId) return null;
+
     const message: Message = createBotMessage({ channelId, content, embeds: [] });
     message.flags = getMessageFlags(selfInChannel);
     message.author = UserStore.getUser(userId);
@@ -107,7 +108,7 @@ let clientOldChannelId: string | undefined;
 export default definePlugin({
     name: "VoiceChannelLog",
     description: "Logs who joins and leaves voice channels",
-    authors: [Devs.Sqaaakoi, EquicordDevs.thororen],
+    authors: [Devs.Sqaaakoi, EquicordDevs.thororen, EquicordDevs.nyx],
     contextMenus: {
         "channel-context": patchChannelContextMenu
     },
@@ -118,6 +119,8 @@ export default definePlugin({
             voiceStates.forEach(state => {
                 // mmmm hacky workaround
                 const { userId, channelId } = state;
+                const user = UserStore.getUser(userId) as User & { globalName: string; };
+                const username = user.globalName || user.username;
                 let { oldChannelId } = state;
                 if (userId === clientUserId && channelId !== clientOldChannelId) {
                     oldChannelId = clientOldChannelId;
@@ -129,15 +132,20 @@ export default definePlugin({
 
                 const logEntry = {
                     userId,
+                    username,
                     oldChannel: oldChannelId || null,
                     newChannel: channelId || null,
                     timestamp: new Date()
                 };
 
-                addLogEntry(logEntry, oldChannelId);
-                addLogEntry(logEntry, channelId);
+
+                if (settings.store.mode !== 2) {
+                    addLogEntry(logEntry, oldChannelId);
+                    addLogEntry(logEntry, channelId);
+                }
 
                 if (!settings.store.voiceChannelChatSelf && userId === clientUserId) return;
+                if (settings.store.mode === 1) return;
                 // Join / Leave
                 if ((!oldChannelId && channelId) || (oldChannelId && !channelId)) {
                     // empty string is to make type checker shut up

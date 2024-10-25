@@ -6,392 +6,518 @@
 
 import "./styles.css";
 
-import { definePluginSettings } from "@api/Settings";
 import { EquicordDevs } from "@utils/constants";
-import definePlugin, { OptionType } from "@utils/types";
+import { Logger } from "@utils/Logger";
+import definePlugin from "@utils/types";
+import { findStoreLazy } from "@webpack";
 
-const eventListeners: { element: HTMLElement, handler: (e: any) => void; }[] = [];
-let lastHoveredElement: HTMLElement | null = null;
+import { getMimeType, isLinkAnImage, settings, stripDiscordParams } from "./settings";
 
-const mimeTypes = {
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    png: "image/png",
-    gif: "image/gif",
-    webp: "image/webp",
-    svg: "image/svg+xml",
-    mp4: "video/mp4",
-    webm: "video/webm",
-    mov: "video/quicktime",
+const logger = new Logger("ImagePreview", "#FFFFFF");
+const StickerStore = findStoreLazy("StickersStore") as {
+    getStickerById(id: string): any;
 };
 
-function getMimeType(extension: string | undefined): [boolean, string] {
-    if (!extension) return [false, ""];
+let currentPreview: HTMLDivElement | null = null;
+let currentPreviewFile: HTMLImageElement | HTMLVideoElement | null = null;
+let currentPreviewFileSize: [number, number] | null = null;
+let currentPreviewType: "image" | "video" | null = null;
+let loadingSpinner: HTMLDivElement | null = null;
+let isCtrlHeld: boolean = false;
+let zoomLevel: number = 1;
+let dragOffsetX: number = 0;
+let dragOffsetY: number = 0;
+let isDragging: boolean = false;
+let shouldKeepPreviewOpenTimeout: NodeJS.Timeout | null = null;
+let shouldKeepPreviewOpen: boolean = false;
+let hoverDelayTimeout: NodeJS.Timeout | null = null;
+let lastMouseEvent: MouseEvent | null = null;
 
-    const lowerExt = extension.trim().toLowerCase();
-    return [!!mimeTypes[lowerExt], mimeTypes[lowerExt] || ""];
+let observer: MutationObserver | null = null;
+
+function deleteCurrentPreview() {
+    if (!currentPreview) return;
+
+    currentPreview.remove();
+    lastMouseEvent = null;
+    currentPreview = null;
+    currentPreviewFile = null;
+    currentPreviewFileSize = null;
+    currentPreviewType = null;
+    lastMouseEvent = null;
+    isDragging = false;
+    shouldKeepPreviewOpen = false;
+
+    if (loadingSpinner) {
+        loadingSpinner.remove();
+        loadingSpinner = null;
+    }
+
+    zoomLevel = 1;
 }
 
-function addHoverEffect(element: HTMLElement, type: string) {
-    let hoverElementActual;
-
-    if (settings.store.hoverOutline) {
-        if (type === "messageImages") {
-            hoverElementActual = element.closest('[id^="message-accessories-"]')?.querySelector("div")?.querySelector("div") || element;
-
-            if (!(hoverElementActual instanceof HTMLDivElement)) {
-                hoverElementActual = element;
+function scanObjects(element: Element) {
+    if (settings.store.messageImages) {
+        element.querySelectorAll('[data-role="img"]:not([data-processed="true"])').forEach(img => {
+            const messageParent = img.closest("[class^='messageListItem_']");
+            if (messageParent) {
+                addHoverListener(img);
             }
-        } else {
-            hoverElementActual = element.querySelector("img") || element;
+        });
+    }
+
+    if (settings.store.messageAvatars) {
+        const selectors = [
+            'img[src*="cdn.discordapp.com/avatars/"]:not([data-processed="true"])',
+            'img[src*="cdn.discordapp.com/guilds/"]:not([data-processed="true"])',
+            'img[src^="/assets/"][class*="avatar"]:not([data-processed="true"])',
+        ];
+
+        const jointSelector = selectors.join(", ");
+        element.querySelectorAll(jointSelector).forEach(avatar => {
+            const messageParent = avatar.closest("[class^='messageListItem_']");
+            if (messageParent) {
+                addHoverListener(avatar);
+            }
+        });
+    }
+
+    if (settings.store.messageLinks) {
+        element.querySelectorAll("span:not([data-processed='true'])").forEach(span => {
+            const url = span.textContent?.replace(/<[^>]*>?/gm, "").trim();
+            if (url && (url.startsWith("http://") || url.startsWith("https://")) && isLinkAnImage(url)) {
+                const messageParent = span.closest("[class^='messageListItem_']");
+                if (messageParent) {
+                    addHoverListener(span);
+                }
+            }
+        });
+    }
+
+    if (settings.store.messageStickers) {
+        element.querySelectorAll('img[data-type="sticker"]:not([data-processed="true"])').forEach(sticker => {
+            const messageParent = sticker.closest("[class^='messageListItem_']");
+            if (messageParent) {
+                addHoverListener(sticker, true);
+            }
+        });
+    }
+}
+
+function createObserver() {
+    return new MutationObserver(mutations => {
+        mutations.forEach(mutation => {
+            if (mutation.type === "childList") {
+                mutation.addedNodes.forEach(addedNode => {
+                    if (addedNode instanceof HTMLElement) {
+                        const element = addedNode as HTMLElement;
+                        scanObjects(element);
+                    }
+                });
+            }
+        });
+    });
+}
+
+function loadImagePreview(url: string, sticker: boolean) {
+    let stickerType: string | null = null;
+
+    if (sticker) {
+        const stickerId = url.split("/").pop()?.split(".")[0] ?? null;
+        const stickerData = stickerId ? StickerStore.getStickerById(stickerId) : null;
+
+        if (stickerData) {
+            switch (stickerData.type) {
+                case 1:
+                    stickerType = "png";
+                    break;
+                case 2:
+                    stickerType = "apng";
+                    break;
+                case 3:
+                    stickerType = "lottie";
+                    break;
+                case 4:
+                    stickerType = "gif";
+                    break;
+                default:
+                    stickerType = "png";
+                    break;
+            }
+        }
+    }
+
+    const urlParams = new URLSearchParams(url.split("?")[1]);
+    const formatParam = urlParams.get("format");
+    const extension = stickerType || formatParam || url.split(".").pop()?.split("?")[0] || "";
+    const [allowed, mimeType] = getMimeType(extension);
+
+    if (!allowed) return;
+
+    const [maxWidth, maxHeight] = settings.store.defaultMaxSize === "0" ? [Infinity, Infinity] : settings.store.defaultMaxSize.split("x").map(Number);
+    currentPreviewType = mimeType.includes("video") ? "video" : "image";
+
+    const preview = document.createElement("div");
+    preview.className = "image-preview";
+
+    loadingSpinner = document.createElement("div");
+    loadingSpinner.className = "loading-spinner";
+
+    preview.appendChild(loadingSpinner);
+    document.body.appendChild(preview);
+    currentPreview = preview;
+
+    const fileInfo = document.createElement("div");
+    fileInfo.className = "file-info";
+
+    const fileName = document.createElement("span");
+    const fileSize = document.createElement("span");
+    const fileSizeSpan = document.createElement("p");
+    const showingSize = document.createElement("p");
+    const mimeTypeSpan = document.createElement("span");
+
+    fileSize.className = "file-size";
+
+    const updatePositionAfterLoad = () => {
+        if (lastMouseEvent && currentPreview) {
+            updatePreviewPosition(lastMouseEvent, currentPreview);
+        }
+    };
+
+    const resizeMedia = (mediaWidth: number, mediaHeight: number) => {
+        const mediaElement = currentPreviewFile as HTMLImageElement | HTMLVideoElement | null;
+        if (!mediaElement) return;
+
+        if (mediaWidth > maxWidth || mediaHeight > maxHeight) {
+            const widthRatio = maxWidth / mediaWidth;
+            const heightRatio = maxHeight / mediaHeight;
+            const scale = Math.min(widthRatio, heightRatio);
+
+            mediaElement.style.width = `${mediaWidth * scale}px`;
+            mediaElement.style.height = `${mediaHeight * scale}px`;
         }
 
-        hoverElementActual.style.outline = `${settings.store.hoverOutlineSize} dotted ${settings.store.hoverOutlineColor}`;
-    }
+        updatePositionAfterLoad();
+    };
 
-    const url = element.getAttribute("data-safe-src") || element.getAttribute("src") || element.getAttribute("href") || element.textContent;
+    fileName.className = "file-name";
+    fileName.textContent = url.split("/").pop()?.split("?")[0] || "";
 
-    if (!url) {
-        hoverElementActual.style.outline = "";
-        return;
-    }
+    mimeTypeSpan.textContent = mimeType;
+    fileInfo.appendChild(mimeTypeSpan);
+    fileInfo.appendChild(fileSize);
 
-    const strippedUrl = stripDiscordParams(url);
-    const fileName: string = strippedUrl.split("/").pop()?.split(/[?#&]/)[0] || "unknown";
-    const [allowed, mimeType] = getMimeType(fileName.split(".").pop());
+    if (currentPreviewType === "video") {
+        const video = document.createElement("video");
+        video.src = url;
+        video.className = "preview-media";
+        video.autoplay = true;
+        video.muted = true;
+        video.loop = true;
 
-    if (!allowed) {
-        hoverElementActual.style.outline = "";
-        return;
-    }
+        video.onplay = () => {
+            video.removeAttribute("controls");
+        };
 
-    const isImage = allowed && mimeType.startsWith("image");
-    const isVideo = allowed && mimeType.startsWith("video");
+        video.onloadeddata = () => {
+            currentPreviewFileSize = [video.videoWidth, video.videoHeight];
+            fileSizeSpan.textContent = `${currentPreviewFileSize[0]}x${currentPreviewFileSize[1]}`;
+            fileSize.appendChild(fileSizeSpan);
 
-    const previewDiv = document.createElement("div");
-    previewDiv.classList.add("preview-div");
+            requestAnimationFrame(() => {
+                if (!currentPreviewFileSize) return;
+                const showingMediaSize = [video.clientWidth, video.clientHeight];
+                if (showingMediaSize[0] !== currentPreviewFileSize[0] && showingMediaSize[1] !== currentPreviewFileSize[1]) {
+                    showingSize.textContent = showingMediaSize ? `(${showingMediaSize[0]}x${showingMediaSize[1]})` : "";
+                    fileSize.appendChild(showingSize);
+                }
 
-    let mediaElement;
-    if (isImage) {
-        mediaElement = document.createElement("img");
-        mediaElement.src = strippedUrl;
-        mediaElement.alt = fileName;
-    } else if (isVideo) {
-        mediaElement = document.createElement("video");
-        mediaElement.src = strippedUrl;
-        mediaElement.autoplay = true;
-        mediaElement.muted = true;
-        mediaElement.loop = true;
-        mediaElement.controls = false;
+                preview.appendChild(fileName);
+                preview.appendChild(fileInfo);
+            });
+
+            if (loadingSpinner) loadingSpinner.remove();
+            video.style.display = "block";
+
+            resizeMedia(video.videoWidth, video.videoHeight);
+        };
+
+
+        preview.appendChild(video);
+        currentPreviewFile = video;
     } else {
-        return;
+        const img = new Image();
+        img.src = url;
+        img.className = "preview-media";
+        img.onload = () => {
+            currentPreviewFileSize = [img.naturalWidth, img.naturalHeight];
+            fileSizeSpan.textContent = `${currentPreviewFileSize[0]}x${currentPreviewFileSize[1]}`;
+            fileSize.appendChild(fileSizeSpan);
+
+            requestAnimationFrame(() => {
+                if (!currentPreviewFileSize) return;
+
+                const showingMediaSize = [img.clientWidth, img.clientHeight];
+                if (showingMediaSize[0] !== currentPreviewFileSize[0] && showingMediaSize[1] !== currentPreviewFileSize[1]) {
+                    showingSize.textContent = showingMediaSize ? `(${showingMediaSize[0]}x${showingMediaSize[1]})` : "";
+                    fileSize.appendChild(showingSize);
+                }
+
+                preview.appendChild(fileName);
+                preview.appendChild(fileInfo);
+            });
+
+            if (loadingSpinner) loadingSpinner.remove();
+            img.style.display = "block";
+
+            resizeMedia(img.naturalWidth, img.naturalHeight);
+        };
+
+        preview.appendChild(img);
+        currentPreviewFile = img;
     }
 
-    const previewHeader = document.createElement("div");
-    previewHeader.classList.add("preview-header");
+    if (settings.store.mouseOnlyMode) {
+        preview.style.pointerEvents = "auto";
 
-    const mimeSpan = document.createElement("span");
-    mimeSpan.textContent = `MIME: ${mimeType}`;
-    previewHeader.appendChild(mimeSpan);
+        currentPreview.addEventListener("mouseover", () => {
+            if (currentPreview && !isCtrlHeld) {
+                shouldKeepPreviewOpen = true;
+                currentPreview.classList.add("allow-zoom-and-drag");
+            }
+        });
 
-    const fileNameSpan = document.createElement("span");
-    fileNameSpan.classList.add("file-name");
-    fileNameSpan.textContent = fileName;
-    previewHeader.appendChild(fileNameSpan);
+        currentPreview.addEventListener("mouseout", () => {
+            if (currentPreview && !isCtrlHeld && shouldKeepPreviewOpen) {
+                deleteCurrentPreview();
+                shouldKeepPreviewOpen = false;
+            }
+        });
+    }
 
-    const dimensionsDiv = document.createElement("div");
-    dimensionsDiv.classList.add("dimensions-div");
+    currentPreview.addEventListener("wheel", (event: WheelEvent) => {
+        const [{ zoomFactor }, zoomSpeed] = [settings.store, 0.0005];
 
-    const dimensionsDisplaying = document.createElement("span");
-    dimensionsDisplaying.classList.add("dimensions-displaying");
-    const dimensionsOriginal = document.createElement("span");
-    dimensionsOriginal.classList.add("dimensions-original");
+        if (isCtrlHeld || event.target === currentPreview || event.target === currentPreviewFile) {
+            event.preventDefault();
 
-    mediaElement.onload = mediaElement.onloadstart = () => {
-        if (isImage) {
-            dimensionsDisplaying.textContent = `Displaying: ${mediaElement.width}x${mediaElement.height}`;
-            dimensionsOriginal.textContent = `Original: ${mediaElement.naturalWidth}x${mediaElement.naturalHeight}`;
-        } else if (isVideo) {
-            dimensionsDisplaying.textContent = `Displaying: ${mediaElement.videoWidth}x${mediaElement.videoHeight}`;
-            dimensionsOriginal.textContent = `Original: ${mediaElement.videoWidth}x${mediaElement.videoHeight}`;
-        }
+            zoomLevel += event.deltaY * -zoomSpeed * zoomFactor;
 
-        if (mediaElement.width < 200) {
-            previewHeader.style.flexDirection = "column";
-            previewHeader.style.alignItems = "center";
-            previewHeader.style.justifyContent = "center";
-            dimensionsDiv.style.textAlign = "center";
-            dimensionsDiv.style.alignItems = "center";
-            previewHeader.style.gap = "5px";
-            previewHeader.insertBefore(fileNameSpan, previewHeader.firstChild);
-        }
-    };
+            const previewMedia = currentPreviewFile as HTMLImageElement | HTMLVideoElement | null;
+            if (previewMedia) {
+                const rect = previewMedia.getBoundingClientRect();
+                const offsetX = (event.clientX - rect.left) / rect.width;
+                const offsetY = (event.clientY - rect.top) / rect.height;
 
-    dimensionsDiv.appendChild(dimensionsDisplaying);
-    dimensionsDiv.appendChild(dimensionsOriginal);
-    previewHeader.appendChild(dimensionsDiv);
-
-    previewDiv.appendChild(previewHeader);
-    previewDiv.appendChild(mediaElement);
-
-    document.body.appendChild(previewDiv);
-
-    const hoverDelay = settings.store.hoverDelay * 1000;
-    let timeout;
-
-    const showPreview = () => {
-        timeout = setTimeout(() => {
-            previewDiv.style.display = "block";
-            hoverElementActual.style.outline = `${settings.store.hoverOutlineSize} dotted ${settings.store.hoverOutlineColor}`;
-            positionPreviewDiv(previewDiv, null);
-        }, hoverDelay);
-    };
-
-    const movePreviewListener: (e: MouseEvent) => void = e => {
-        positionPreviewDiv(previewDiv, e);
-    };
-
-    const removePreview = () => {
-        clearTimeout(timeout);
-        previewDiv.remove();
-        document.removeEventListener("mousemove", movePreviewListener);
-        if (hoverElementActual) {
-            hoverElementActual.style.outline = "";
-        }
-    };
-
-    element.addEventListener("mouseenter", showPreview);
-    element.addEventListener("mouseleave", removePreview);
-    document.addEventListener("mousemove", movePreviewListener);
-
-    eventListeners.push({ element, handler: showPreview });
-    eventListeners.push({ element, handler: removePreview });
-    eventListeners.push({ element: previewDiv, handler: movePreviewListener });
-
-    function positionPreviewDiv(previewDiv: HTMLElement, e: MouseEvent | null) {
-        const previewWidth = previewDiv.offsetWidth;
-        const previewHeight = previewDiv.offsetHeight;
-        const pageWidth = window.innerWidth;
-        const pageHeight = window.innerHeight;
-
-        const mouseX = e ? e.pageX : window.innerWidth / 2;
-        const mouseY = e ? e.pageY : window.innerHeight / 2;
-
-        let left = mouseX + 10;
-        let top = mouseY + 10;
-
-        if (left + previewWidth > pageWidth) {
-            left = pageWidth - previewWidth - 10;
-        }
-        if (top + previewHeight > pageHeight) {
-            top = pageHeight - previewHeight - 10;
-        }
-
-        previewDiv.style.left = `${left}px`;
-        previewDiv.style.top = `${top}px`;
-
-        const maxImageWidth = pageWidth - 20;
-        const maxImageHeight = pageHeight - 20;
-
-        if (isImage) {
-            if (mediaElement.naturalWidth > maxImageWidth || mediaElement.naturalHeight > maxImageHeight) {
-                const aspectRatio = mediaElement.naturalWidth / mediaElement.naturalHeight;
-
-                if (mediaElement.naturalWidth > maxImageWidth) {
-                    mediaElement.width = maxImageWidth;
-                    mediaElement.height = maxImageWidth / aspectRatio;
-                }
-                if (mediaElement.height > maxImageHeight) {
-                    mediaElement.height = maxImageHeight;
-                    mediaElement.width = maxImageHeight * aspectRatio;
-                }
-            } else {
-                mediaElement.width = mediaElement.naturalWidth;
-                mediaElement.height = mediaElement.naturalHeight;
+                previewMedia.style.transformOrigin = `${offsetX * 100}% ${offsetY * 100}%`;
+                previewMedia.style.transform = `scale(${zoomLevel})`;
             }
         }
+    });
 
-        dimensionsDisplaying.textContent = isImage ? `Displaying: ${mediaElement.width}x${mediaElement.height}` : `Displaying: ${mediaElement.videoWidth}x${mediaElement.videoHeight}`;
-        dimensionsOriginal.textContent = isImage ? `Original: ${mediaElement.naturalWidth}x${mediaElement.naturalHeight}` : `Original: ${mediaElement.videoWidth}x${mediaElement.videoHeight}`;
-    }
-}
+    currentPreview.addEventListener("mousedown", (event: MouseEvent) => {
+        if ((isCtrlHeld || shouldKeepPreviewOpen) && currentPreview) {
+            isDragging = true;
 
-function handleHover(elements: NodeListOf<HTMLElement> | HTMLElement[], type: string) {
-    elements.forEach(el => {
-        if (!el.dataset.hoverListenerAdded) {
-            const handler = () => addHoverEffect(el, type);
-            el.addEventListener("mouseover", handler);
-            el.dataset.hoverListenerAdded = "true";
-            eventListeners.push({ element: el, handler });
+            const rect = currentPreview.getBoundingClientRect();
+            dragOffsetX = event.clientX - rect.left;
+            dragOffsetY = event.clientY - rect.top;
+
+            event.preventDefault();
         }
     });
 }
 
-function isLinkAnImage(url: string) {
-    const extension = url.split(".").pop();
-    const [isImage,] = getMimeType(extension);
-    return isImage;
-}
+function updatePreviewPosition(mouseEvent: MouseEvent, element: HTMLElement) {
+    if (currentPreview && !isCtrlHeld) {
+        const topPadding = 0;
+        const leftPadding = 15;
+        const minTopOffset = 30;
+        const minBottomOffset = 30;
+        const maxWidth: number = window.innerWidth * 0.9;
+        const maxHeight: number = window.innerHeight * 0.9;
 
-function stripDiscordParams(url: string) {
-    let newUrl = url.replace(/([?&])(width|size|height|h|w)=[^&]+/g, "");
+        const previewWidth: number = currentPreview.offsetWidth;
+        const previewHeight: number = currentPreview.offsetHeight;
 
-    newUrl = newUrl.replace(/([?&])quality=[^&]*/g, "$1quality=lossless");
+        let left: number = mouseEvent.pageX + leftPadding;
+        let top: number = mouseEvent.pageY + topPadding;
 
-    newUrl = newUrl.replace(/([?&])+$/, "")
-        .replace(/\?&/, "?")
-        .replace(/\?$/, "")
-        .replace(/&{2,}/g, "&");
+        const spaceOnRight = window.innerWidth - mouseEvent.pageX - previewWidth - leftPadding;
+        const spaceOnLeft = mouseEvent.pageX - previewWidth - leftPadding;
 
-    if (newUrl.includes("quality=lossless") && !newUrl.includes("?")) {
-        newUrl = newUrl.replace(/&quality=lossless/, "?quality=lossless");
+        if (spaceOnRight >= leftPadding) {
+            left = mouseEvent.pageX + leftPadding;
+        } else if (spaceOnLeft >= leftPadding) {
+            left = mouseEvent.pageX - previewWidth - leftPadding;
+        } else {
+            left = Math.max(leftPadding, Math.min(mouseEvent.pageX + leftPadding, window.innerWidth - previewWidth - leftPadding));
+        }
+
+        if (top + previewHeight > window.innerHeight - minBottomOffset) {
+            top = mouseEvent.pageY - previewHeight;
+
+            if (top < minTopOffset) {
+                top = minTopOffset;
+            }
+        } else if (top + previewHeight + topPadding > window.innerHeight - minBottomOffset) {
+            top = window.innerHeight - previewHeight - minBottomOffset;
+        } else {
+            top = Math.min(top, window.innerHeight - previewHeight - topPadding - minBottomOffset);
+        }
+
+        currentPreview.style.left = `${left}px`;
+        currentPreview.style.top = `${top}px`;
+
+        const mediaElement = element as HTMLImageElement | HTMLVideoElement | null;
+        if (mediaElement) {
+            mediaElement.style.maxWidth = `${maxWidth}px`;
+            mediaElement.style.maxHeight = `${maxHeight}px`;
+        }
     }
-
-    return newUrl;
 }
 
-const settings = definePluginSettings({
-    messageImages: {
-        type: OptionType.BOOLEAN,
-        description: "Enable Message Images Hover Detection",
-        default: true,
-    },
-    messageAvatars: {
-        type: OptionType.BOOLEAN,
-        description: "Enable Message Avatars Hover Detection",
-        default: true,
-    },
-    messageLinks: {
-        type: OptionType.BOOLEAN,
-        description: "Enable Message Links Hover Detection",
-        default: true,
-    },
-    messageStickers: {
-        type: OptionType.BOOLEAN,
-        description: "Enable Message Stickers Hover Detection",
-        default: true,
-    },
-    hoverOutline: {
-        type: OptionType.BOOLEAN,
-        description: "Enable Hover Outline on Elements",
-        default: true,
-    },
-    hoverOutlineColor: {
-        type: OptionType.STRING,
-        description: "Hover Outline Color",
-        default: "red",
-    },
-    hoverOutlineSize: {
-        type: OptionType.STRING,
-        description: "Hover Outline Size",
-        default: "1px",
-    },
-    hoverDelay: {
-        type: OptionType.SLIDER,
-        description: "Display Hover Delay (seconds)",
-        markers: [0, 1, 2, 3, 4, 5],
-        default: 1,
-    },
-});
+function addHoverListener(element: Element, sticker: boolean = false) {
+    element.setAttribute("data-processed", "true");
+
+    element.addEventListener("mouseover", event => {
+        if (isCtrlHeld && currentPreview) return;
+
+        if (currentPreview || loadingSpinner) {
+            deleteCurrentPreview();
+        }
+
+        if (shouldKeepPreviewOpenTimeout) {
+            clearTimeout(shouldKeepPreviewOpenTimeout);
+            shouldKeepPreviewOpenTimeout = null;
+        }
+
+        const mouseEvent = event as MouseEvent;
+        lastMouseEvent = mouseEvent;
+        const imageURL: string | null =
+            element.getAttribute("data-safe-src") ||
+            element.getAttribute("src") ||
+            element.getAttribute("href") ||
+            element.textContent;
+        const strippedURL: string | null = imageURL
+            ? stripDiscordParams(imageURL)
+            : null;
+
+        if (!strippedURL) return;
+
+        hoverDelayTimeout = setTimeout(() => {
+            loadImagePreview(strippedURL, sticker);
+            if (lastMouseEvent) {
+                updatePreviewPosition(lastMouseEvent, element as HTMLElement);
+            }
+        }, settings.store.hoverDelay * 1000);
+    });
+
+    element.addEventListener("mousemove", event => {
+        if (!hoverDelayTimeout) return;
+
+        lastMouseEvent = event as MouseEvent;
+
+        if (currentPreview && !isCtrlHeld && !settings.store.fixedImage) {
+            updatePreviewPosition(lastMouseEvent, element as HTMLElement);
+        }
+    });
+
+    element.addEventListener("mouseout", () => {
+        if (hoverDelayTimeout) {
+            clearTimeout(hoverDelayTimeout);
+            hoverDelayTimeout = null;
+        }
+
+        function remove() {
+            if (currentPreview && !isCtrlHeld && !shouldKeepPreviewOpen) {
+                deleteCurrentPreview();
+            }
+        }
+
+        if (settings.store.mouseOnlyMode) {
+            shouldKeepPreviewOpenTimeout = setTimeout(remove, 500);
+        } else {
+            remove();
+        }
+    });
+}
+
+function handleKeydown(event: KeyboardEvent) {
+    if (event.key === "Control" && currentPreview) {
+        isCtrlHeld = true;
+        currentPreview.classList.add("allow-zoom-and-drag");
+    }
+}
+
+function handleKeyup(event: KeyboardEvent) {
+    if (event.key === "Control") {
+        isCtrlHeld = false;
+        if (currentPreview) {
+            deleteCurrentPreview();
+        }
+    }
+}
+
+function handleMousemove(event: MouseEvent) {
+    if (isDragging && (isCtrlHeld || shouldKeepPreviewOpen) && currentPreview) {
+        const left = event.clientX - dragOffsetX;
+        const top = event.clientY - dragOffsetY;
+
+        currentPreview.style.left = `${left}px`;
+        currentPreview.style.top = `${top}px`;
+    }
+}
+
+function handleMouseup() {
+    if (currentPreview && isDragging) {
+        isDragging = false;
+    }
+}
+
+function removeHoverListeners() {
+    const processedElements = document.querySelectorAll('[data-processed="true"]');
+
+    processedElements.forEach(element => {
+        const clone = element.cloneNode(true);
+        element.replaceWith(clone);
+        element.removeAttribute("data-processed");
+    });
+}
 
 export default definePlugin({
     name: "ImagePreview",
-    description: "Hover on images, avatars, links, guild icons, and stickers to show a full preview.",
+    description: "Hover on message images, avatars, links, and message stickers to show a full preview.",
     authors: [EquicordDevs.creations],
     settings: settings,
 
     start() {
-        function initialScan() {
-            const appContainer = document.querySelector('[class*="app-"]');
-            if (appContainer) {
-                if (settings.store.messageImages) {
-                    handleHover(appContainer.querySelectorAll('[data-role="img"]'), "messageImages");
-                }
+        const targetNode = document.body;
 
-                if (settings.store.messageAvatars) {
-                    handleHover(appContainer.querySelectorAll('img[src*="cdn.discordapp.com/avatars/"], img[src*="cdn.discordapp.com/guilds/"], img[src^="/assets/"][class*="avatar"]'), "messageAvatars");
-                }
+        if (targetNode) {
+            scanObjects(targetNode);
+            document.addEventListener("keydown", handleKeydown);
+            document.addEventListener("keyup", handleKeyup);
+            document.addEventListener("mousemove", handleMousemove);
+            document.addEventListener("mouseup", handleMouseup);
 
-                if (settings.store.messageLinks) {
-                    appContainer.querySelectorAll("span").forEach(span => {
-                        const url = span.textContent?.replace(/<[^>]*>?/gm, "");
-                        if (url && (url.startsWith("http://") || url.startsWith("https://")) && isLinkAnImage(url)) {
-                            handleHover([span], "messageLinks");
-                        }
-                    });
-                }
-
-                if (settings.store.messageStickers) {
-                    handleHover(appContainer.querySelectorAll('img[data-type="sticker"]'), "messageStickers");
-                }
-            }
+            observer = createObserver();
+            observer.observe(targetNode, { childList: true, subtree: true });
+        } else {
+            logger.info("body wasnt found ?????????");
         }
-
-        const observer = new MutationObserver(mutations => {
-            mutations.forEach(mutation => {
-                if (mutation.type === "childList") {
-                    mutation.addedNodes.forEach(addedNode => {
-                        if (addedNode instanceof HTMLElement) {
-                            const element = addedNode as HTMLElement;
-
-                            if (lastHoveredElement === element) return;
-                            lastHoveredElement = element;
-
-                            if (settings.store.messageImages) {
-                                handleHover(element.querySelectorAll('[data-role="img"]'), "messageImages");
-                            }
-
-                            if (settings.store.messageAvatars) {
-                                handleHover(element.querySelectorAll('img[src*="cdn.discordapp.com/avatars/"], img[src*="cdn.discordapp.com/guilds/"], img[src^="/assets/"][class*="avatar"]'), "messageAvatars");
-                            }
-
-                            if (settings.store.messageLinks) {
-                                element.querySelectorAll("span").forEach(span => {
-                                    const url = span.textContent?.replace(/<[^>]*>?/gm, "");
-                                    if (url && (url.startsWith("http://") || url.startsWith("https://")) && isLinkAnImage(url)) {
-                                        handleHover([span], "messageLinks");
-                                    }
-                                });
-                            }
-
-                            if (settings.store.messageStickers) {
-                                handleHover(element.querySelectorAll('img[data-type="sticker"]'), "messageStickers");
-                            }
-                        }
-                    });
-                }
-            });
-        });
-
-        const appContainer = document.querySelector('[class*="app-"]');
-        if (appContainer) {
-            observer.observe(appContainer, { childList: true, subtree: true });
-        }
-
-        initialScan();
-
-        this.observer = observer;
     },
 
     stop() {
-        this.observer.disconnect();
+        if (observer) observer.disconnect();
 
-        eventListeners.forEach(({ element, handler }) => {
-            element.removeEventListener("mouseover", handler);
-            element.removeEventListener("mouseenter", handler);
-            element.removeEventListener("mouseleave", handler);
-            element.removeEventListener("mousemove", handler);
-        });
+        deleteCurrentPreview();
+        removeHoverListeners();
 
-        eventListeners.length = 0;
-
-        document.querySelectorAll("[data-hover-listener-added]").forEach(el => {
-            el.removeAttribute("data-hover-listener-added");
-            (el as HTMLElement).style.outline = "";
-        });
-
-        document.querySelectorAll(".preview-div").forEach(preview => {
-            preview.remove();
-        });
+        document.removeEventListener("keydown", handleKeydown);
+        document.removeEventListener("keyup", handleKeyup);
+        document.removeEventListener("mousemove", handleMousemove);
+        document.removeEventListener("mouseup", handleMouseup);
     }
 });
+

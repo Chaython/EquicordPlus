@@ -23,7 +23,7 @@ import ErrorBoundary from "@components/ErrorBoundary";
 import { Flex } from "@components/Flex";
 import { Link } from "@components/Link";
 import { openUpdaterModal } from "@components/VencordSettings/UpdaterTab";
-import { Devs, SUPPORT_CHANNEL_ID, SUPPORT_CHANNEL_IDS, VC_SUPPORT_CHANNEL_ID } from "@utils/constants";
+import { Devs, GUILD_ID, SUPPORT_CHANNEL_ID, SUPPORT_CHANNEL_IDS, VC_GUILD_ID, VC_SUPPORT_CHANNEL_ID } from "@utils/constants";
 import { sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import { Margins } from "@utils/margins";
@@ -40,17 +40,9 @@ import plugins, { PluginMeta } from "~plugins";
 
 import SettingsPlugin from "./settings";
 
-const VENCORD_GUILD_ID = "1015060230222131221";
-const EQUICORD_GUILD_ID = "1015060230222131221";
 const VENBOT_USER_ID = "1017176847865352332";
 const KNOWN_ISSUES_CHANNEL_ID = "1222936386626129920";
 const CodeBlockRe = /```js\n(.+?)```/s;
-
-const AllowedChannelIds = [
-    SUPPORT_CHANNEL_ID,
-    "1173659827881390160", // Equicord > #dev
-    "1173342942858055721", // Equicord > #support
-];
 
 const TrustedRolesIds = [
     "1026534353167208489", // contributor
@@ -58,6 +50,7 @@ const TrustedRolesIds = [
     "1042507929485586532", // donor
     "1173520023239786538", // Equicord Team
     "1222677964760682556", // Equicord Contributor
+    "1287079931645263968", // Equibop Contributor
     "1173343399470964856", // Vencord Contributor
 ];
 
@@ -82,7 +75,7 @@ async function generateDebugInfoMessage() {
         if (IS_DISCORD_DESKTOP) return `Discord Desktop v${DiscordNative.app.getVersion()}`;
         if (IS_VESKTOP) return `Vesktop v${VesktopNative.app.getVersion()}`;
         if (IS_EQUIBOP) return `Equibop v${VesktopNative.app.getVersion()}`;
-        if ("armcord" in window) return `ArmCord v${window.armcord.version}`;
+        if ("legcord" in window) return `LegCord v${window.legcord.version}`;
 
         // @ts-expect-error
         const name = typeof unsafeWindow !== "undefined" ? "UserScript" : "Web";
@@ -121,7 +114,7 @@ function generatePluginList() {
     const isApiPlugin = (plugin: string) => plugin.endsWith("API") || plugins[plugin].required;
 
     const enabledPlugins = Object.keys(plugins)
-        .filter(p => Vencord.Plugins.isPluginEnabled(p) && !isApiPlugin(p));
+        .filter(p => Vencord.Plugins.isPluginEnabled(p) && !isApiPlugin(p)).sort();
 
     const enabledStockPlugins = enabledPlugins.filter(p => !PluginMeta[p].userPlugin);
     const enabledUserPlugins = enabledPlugins.filter(p => PluginMeta[p].userPlugin);
@@ -156,8 +149,8 @@ export default definePlugin({
     patches: [{
         find: ".BEGINNING_DM.format",
         replacement: {
-            match: /BEGINNING_DM\.format\(\{.+?\}\),(?=.{0,100}userId:(\i\.getRecipientId\(\)))/,
-            replace: "$& $self.ContributorDmWarningCard({ userId: $1 }),"
+            match: /BEGINNING_DM\.format\(\{.+?\}\),(?=.{0,300}(\i)\.isMultiUserDM)/,
+            replace: "$& $self.renderContributorDmWarningCard({ channel: $1 }),"
         }
     }],
 
@@ -165,13 +158,15 @@ export default definePlugin({
         {
             name: "equicord-debug",
             description: "Send Equicord debug info",
-            predicate: ctx => isPluginDev(UserStore.getCurrentUser()?.id) || isEquicordPluginDev(UserStore.getCurrentUser()?.id) || AllowedChannelIds.includes(ctx.channel.id),
+            // @ts-ignore
+            predicate: ctx => isPluginDev(UserStore.getCurrentUser()?.id) || isEquicordPluginDev(UserStore.getCurrentUser()?.id) || GUILD_ID === ctx?.guild?.id,
             execute: async () => ({ content: await generateDebugInfoMessage() })
         },
         {
             name: "equicord-plugins",
             description: "Send Equicord plugin list",
-            predicate: ctx => isPluginDev(UserStore.getCurrentUser()?.id) || isEquicordPluginDev(UserStore.getCurrentUser()?.id) || AllowedChannelIds.includes(ctx.channel.id),
+            // @ts-ignore
+            predicate: ctx => isPluginDev(UserStore.getCurrentUser()?.id) || isEquicordPluginDev(UserStore.getCurrentUser()?.id) || GUILD_ID === ctx?.guild?.id,
             execute: () => ({ content: generatePluginList() })
         }
     ],
@@ -223,7 +218,7 @@ export default definePlugin({
             }
 
             // @ts-ignore outdated type
-            const roles = GuildMemberStore.getSelfMember(VENCORD_GUILD_ID)?.roles || GuildMemberStore.getSelfMember(EQUICORD_GUILD_ID)?.roles;
+            const roles = GuildMemberStore.getSelfMember(VC_GUILD_ID)?.roles || GuildMemberStore.getSelfMember(GUILD_ID)?.roles;
             if (!roles || TrustedRolesIds.some(id => roles.includes(id))) return;
 
             if (!IS_WEB && IS_UPDATER_DISABLED) {
@@ -260,7 +255,8 @@ export default definePlugin({
         }
     },
 
-    ContributorDmWarningCard: ErrorBoundary.wrap(({ userId }) => {
+    renderContributorDmWarningCard: ErrorBoundary.wrap(({ channel }) => {
+        const userId = channel.getRecipientId();
         if (!isPluginDev(userId) || !isEquicordPluginDev(userId)) return null;
         if (RelationshipStore.isFriend(userId) || isPluginDev(UserStore.getCurrentUser()?.id) || isEquicordPluginDev(UserStore.getCurrentUser()?.id)) return null;
 

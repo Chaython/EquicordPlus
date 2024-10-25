@@ -31,6 +31,7 @@ export default definePlugin({
         const ThemeSection = () => ({
             section: "ThemeLibrary",
             label: "Theme Library",
+            searchableTitles: ["Theme Library"],
             element: require("./components/ThemeTab").default,
             id: "ThemeSection",
         });
