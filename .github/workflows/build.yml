@@ -6,7 +6,8 @@ on:
             - dev
 env:
     FORCE_COLOR: true
-    GITHUB_TOKEN: ${{ secrets.ETOKEN }}
+
+permissions: write-all
 
 jobs:
     Build:
@@ -34,7 +35,7 @@ jobs:
               run: pnpm buildStandalone
 
             - name: Generate plugin list
-              run: pnpm generatePluginJson dist/plugins.json dist/plugin-readmes.json
+              run: pnpm generatePluginJson dist/vencordplugins.json
 
             - name: Generate Equicord plugin list
               run: pnpm generateEquicordPluginJson dist/equicordplugins.json
@@ -66,29 +67,101 @@ jobs:
                   rm release/package.json
                   rm release/*.map
 
+            - name: Setup Actions User
+              run: |
+                git config --global user.name "github-actions[bot]"
+                git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
             - name: Upload Equicord Stable
               if: ${{ github.ref_name == 'main' }}
               run: |
                 gh release upload latest --clobber dist/release/*
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             - name: Upload Equicord Dev
               if: ${{ github.ref_name == 'dev' }}
               run: |
                 gh release upload devbuild --clobber dist/release/*
+              env:
+                GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Setup Actions User
+              run: |
+                git config --global user.name "GitHub-Actions"
+                git config --global user.email actions@github.com
+
+            - name: Get Month Day Year
+              id: date
+              uses: Kaven-Universe/github-action-current-date-time@v1
+              with:
+                timezone-offset: 240
+
+            - name: Combine Time
+              id: combined
+              run: |
+                echo "TIME=$HOURS-$MINUTES-$SECONDS" >> $GITHUB_ENV
+                echo "DATE=$YEAR/$MONTH/$DAY" >> $GITHUB_ENV
+              env:
+                YEAR: ${{ steps.date.outputs.year }}
+                MONTH: ${{ steps.date.outputs.month }}
+                DAY: ${{ steps.date.outputs.day }}
+                HOURS: ${{ steps.date.outputs.hours }}
+                MINUTES: ${{ steps.date.outputs.minutes }}
+                SECONDS: ${{ steps.date.outputs.seconds }}
 
             - name: Upload Plugins JSON to Equibored repo
               if: ${{ github.ref_name == 'main' }}
               run: |
-                git config --global user.name "$USERNAME"
-                git config --global user.email "78185467+thororen1234@users.noreply.github.com"
-                git clone https://$USERNAME:$API_TOKEN@github.com/$GH_REPO.git upload
-                cd upload
-                rm plugins.json
-                cp -r ../dist/equicordplugins.json plugins.json
+                git clone https://$USERNAME:$API_TOKEN@github.com/$GH_REPO.git plugins
+                cd plugins
+
+                cp ../dist/*.json .
                 git add -A
+
                 git commit -m "Plugins for https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
                 git push --force https://$USERNAME:$API_TOKEN@github.com/$GH_REPO.git
               env:
                 API_TOKEN: ${{ secrets.ETOKEN }}
                 GH_REPO: Equicord/Equibored
-                USERNAME: thororen1234
+                USERNAME: GitHub-Actions
+
+            - name: Upload Stable Build to Builds repo
+              if: ${{ github.ref_name == 'main' }}
+              run: |
+                git clone https://$USERNAME:$API_TOKEN@github.com/$GH_REPO.git builds
+                cd builds
+
+                cd stable
+                mkdir -p $DATE/$TIME
+                cp -r ../../dist/* ./$DATE/$TIME
+
+                git add -A
+                git commit -m "Stable Build for https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+                git push --force https://$USERNAME:$API_TOKEN@github.com/$GH_REPO.git
+              env:
+                API_TOKEN: ${{ secrets.ETOKEN }}
+                DATE: ${{ env.DATE }}
+                GH_REPO: Equicord/Builds
+                TIME: ${{ env.TIME }}
+                USERNAME: GitHub-Actions
+
+            - name: Upload Dev Build To Builds Repo
+              if: ${{ github.ref_name == 'dev' }}
+              run: |
+                git clone https://$USERNAME:$API_TOKEN@github.com/$GH_REPO.git builds
+                cd builds
+
+                cd devbuilds
+                mkdir -p $DATE/$TIME
+                cp -r ../../dist/* ./$DATE/$TIME
+
+                git add -A
+                git commit -m "Dev Build for https://github.com/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+                git push --force https://$USERNAME:$API_TOKEN@github.com/$GH_REPO.git
+              env:
+                API_TOKEN: ${{ secrets.ETOKEN }}
+                DATE: ${{ env.DATE }}
+                GH_REPO: Equicord/Builds
+                TIME: ${{ env.TIME }}
+                USERNAME: GitHub-Actions

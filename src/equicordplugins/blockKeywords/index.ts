@@ -9,7 +9,7 @@ import { EquicordDevs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { MessageJSON } from "discord-types/general";
 
-var blockedKeywords: Array<RegExp>;
+let blockedKeywords: Array<RegExp>;
 
 const settings = definePluginSettings({
     blockedWords: {
@@ -29,7 +29,13 @@ const settings = definePluginSettings({
         description: "Whether to use a case sensitive search or not",
         default: false,
         restartNeeded: true
-    }
+    },
+    ignoreBlockedMessages: {
+        description: "Completely ignores (recent) new messages bar",
+        type: OptionType.BOOLEAN,
+        default: true,
+        restartNeeded: true,
+    },
 });
 
 export default definePlugin({
@@ -44,6 +50,18 @@ export default definePlugin({
                 replace: "$&$1=$self.blockMessagesWithKeywords($1);"
             }
         },
+        ...[
+            '"ReadStateStore"'
+        ].map(find => ({
+            find,
+            predicate: () => Settings.plugins.BlockKeywords.ignoreBlockedMessages && !Settings.plugins.NoBlockedMessages.ignoreBlockedMessages,
+            replacement: [
+                {
+                    match: /(?<=MESSAGE_CREATE:function\((\i)\){)/,
+                    replace: (_, props) => `if($self.containsBlockedKeywords(${props}.message))return;`
+                }
+            ]
+        })),
     ],
 
     settings,

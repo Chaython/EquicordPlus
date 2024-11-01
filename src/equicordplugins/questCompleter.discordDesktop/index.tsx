@@ -16,6 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import "./style.css";
+
 import { showNotification } from "@api/Notifications";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs, EquicordDevs } from "@utils/constants";
@@ -23,7 +25,7 @@ import { getTheme, Theme } from "@utils/discord";
 import { classes } from "@utils/misc";
 import definePlugin from "@utils/types";
 import { findByProps, findExportedComponentLazy } from "@webpack";
-import { Button, FluxDispatcher, RestAPI, Text, Tooltip, UserStore } from "@webpack/common";
+import { Button, FluxDispatcher, Forms, RestAPI, Tooltip, UserStore } from "@webpack/common";
 const HeaderBarIcon = findExportedComponentLazy("Icon", "Divider");
 const isApp = navigator.userAgent.includes("Electron/");
 
@@ -66,12 +68,7 @@ async function openCompleteQuestUI() {
     const QuestsStore = findByProps("getQuest");
     const quest = [...QuestsStore.quests.values()].find(x => x.id !== "1248385850622869556" && x.userStatus?.enrolledAt && !x.userStatus?.completedAt && new Date(x.config.expiresAt).getTime() > Date.now());
 
-    if (!isApp) {
-        showNotification({
-            title: "Quests Completer",
-            body: "This no longer works in browser. Use the desktop app!",
-        });
-    } else if (!quest) {
+    if (!quest) {
         showNotification({
             title: "Quests Completer",
             body: "No Quests To Complete",
@@ -193,12 +190,17 @@ export default definePlugin({
     name: "QuestCompleter",
     description: "A plugin to complete quests without having the game installed.",
     authors: [Devs.HappyEnderman, EquicordDevs.SerStars, EquicordDevs.thororen],
+    settingsAboutComponent: () => <>
+        <Forms.FormText className="remixme-warning">
+            We can't guarantee this plugin won't get you warned or banned.
+        </Forms.FormText>
+    </>,
     patches: [
         {
             find: "\"invite-button\"",
             replacement: {
-                match: /(function .+?\(.+?\){let{inPopout:.+allowIdle.+?}=.+?\.\i\)\("popup"\),(.+?)=\[\];if\(.+?\){.+"chat-spacer"\)\)\),\(\d,.+?\.jsx\)\(.+?,{children:).+?}}/,
-                replace: "$1[$self.renderQuestButton(),...$2]})}}"
+                match: /(\i\.Fragment,{children:)(\i\i)/,
+                replace: "$1[$self.renderQuestButton(),...$2]"
             }
         },
         {
@@ -239,19 +241,5 @@ export default definePlugin({
             </ErrorBoundary>,
             e.toolbar,
         ];
-    },
-    settingsAboutComponent() {
-        return (<>
-            {
-                isApp ?
-                    <Text variant="text-lg/bold">
-                        The plugin should work properly because you are on the Desktop Client.
-                    </Text>
-                    :
-                    <Text variant="text-lg/bold">
-                        This plugin won't work because you are not on the Desktop Client.
-                    </Text>
-            }
-        </>);
     }
 });
