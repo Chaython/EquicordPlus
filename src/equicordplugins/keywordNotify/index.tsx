@@ -371,14 +371,14 @@ export default definePlugin({
             return this.modify(e);
         };
 
-        FluxDispatcher.subscribe("MESSAGE_CREATE", interceptor);
-        FluxDispatcher.subscribe("MESSAGE_UPDATE", interceptor);
-        FluxDispatcher.subscribe("LOAD_MESSAGES_SUCCESS", interceptor);
+        FluxDispatcher.addInterceptor(interceptor);
     },
+
     stop() {
-        FluxDispatcher.unsubscribe("MESSAGE_CREATE", interceptor);
-        FluxDispatcher.unsubscribe("MESSAGE_UPDATE", interceptor);
-        FluxDispatcher.unsubscribe("LOAD_MESSAGES_SUCCESS", interceptor);
+        const index = FluxDispatcher._interceptors.indexOf(interceptor);
+        if (index > -1) {
+            FluxDispatcher._interceptors.splice(index, 1);
+        }
     },
 
     applyKeywordEntries(m: Message) {
@@ -392,7 +392,7 @@ export default definePlugin({
             let listed = entry.listIds.some(id => id.trim() === m.channel_id || id === m.author.id);
             if (!listed) {
                 const channel = ChannelStore.getChannel(m.channel_id);
-                if (channel !== null) {
+                if (channel != null) {
                     listed = entry.listIds.some(id => id.trim() === channel.guild_id);
                 }
             }
@@ -418,7 +418,7 @@ export default definePlugin({
                     if (safeMatchesRegex(embed.description, entry.regex, flags) || safeMatchesRegex(embed.title, entry.regex, flags)) {
                         matches = true;
                         break;
-                    } else if (embed.fields !== null) {
+                    } else if (embed.fields != null) {
                         for (const field of embed.fields as Array<{ name: string, value: string; }>) {
                             if (safeMatchesRegex(field.value, entry.regex, flags) || safeMatchesRegex(field.name, entry.regex, flags)) {
                                 matches = true;
@@ -475,6 +475,7 @@ export default definePlugin({
         try {
             messageRecord = createMessageRecord(m);
         } catch (err) {
+            console.error(err);
             return;
         }
 
