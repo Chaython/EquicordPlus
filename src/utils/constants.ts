@@ -25,10 +25,8 @@ export const DONOR_ROLE_ID = "1173316879083896912";
 export const CONTRIB_ROLE_ID = "1222677964760682556";
 export const EQUICORD_TEAM = "1173520023239786538";
 export const EQUICORD_HELPERS = "1326406112144265257";
-export const EQUIBOP_CONTRIB_ROLE_ID = "1287079931645263968";
 export const VENCORD_CONTRIB_ROLE_ID = "1173343399470964856";
 export const EQUIBOT_USER_ID = "1243063117852835941";
-export const TESTCORD_GUILD_ID = "1173279886065029291";
 
 // Vencord
 export const VC_SUPPORT_CHANNEL_ID = "1026515880080842772";
@@ -45,7 +43,7 @@ export const VC_SUPPORT_CHANNEL_IDS = [VC_SUPPORT_CHANNEL_ID, VESKTOP_SUPPORT_CH
 export const GUILD_IDS = [GUILD_ID, VC_GUILD_ID];
 export const SUPPORT_CHANNEL_IDS = [SUPPORT_CHANNEL_ID, VC_SUPPORT_CHANNEL_ID];
 export const DONOR_ROLE_IDS = [DONOR_ROLE_ID, VC_DONOR_ROLE_ID];
-export const CONTRIB_ROLE_IDS = [CONTRIB_ROLE_ID, EQUIBOP_CONTRIB_ROLE_ID, VENCORD_CONTRIB_ROLE_ID, VC_CONTRIB_ROLE_ID];
+export const CONTRIB_ROLE_IDS = [CONTRIB_ROLE_ID, VENCORD_CONTRIB_ROLE_ID, VC_CONTRIB_ROLE_ID];
 
 const platform = navigator.platform.toLowerCase();
 export const IS_WINDOWS = platform.startsWith("win");
@@ -873,10 +871,6 @@ export const EquicordDevs = Object.freeze({
         name: "bep",
         id: 0n
     },
-    Benjii: {
-        name: "Benjii",
-        id: 463702169443368970n
-    },
     llytz: {
         name: "llytz",
         id: 1271128098301022240n
@@ -1238,7 +1232,7 @@ export const EquicordDevs = Object.freeze({
         name: "Benjii",
         id: 463702169443368970n
     },
-    keyages: {
+    keircn: {
         name: "Key",
         id: 1230319937155760131n
     },
@@ -1264,25 +1258,6 @@ export const EquicordDevs = Object.freeze({
     }
 } satisfies Record<string, Dev>);
 
-export const TestcordDevs = Object.freeze({
-    x2b: {
-        name: "x2b",
-        id: 996137713432530976n
-    },
-    Benjii: {
-        name: "Benjii",
-        id: 463702169443368970n
-    },
-    babystarsz: {
-        name: "babystarsz",
-        id: 1455985625441501209n
-    },
-    vampireslover: {
-        name: "vampireslover",
-        id: 1455033270709256284n
-    },
-} satisfies Record<string, Dev>);
-
 // iife so #__PURE__ works correctly
 export const VencordDevsById = /* #__PURE__*/ (() =>
     Object.freeze(Object.fromEntries(
@@ -1295,14 +1270,6 @@ export const VencordDevsById = /* #__PURE__*/ (() =>
 export const EquicordDevsById = /* #__PURE__*/ (() =>
     Object.freeze(Object.fromEntries(
         Object.entries(EquicordDevs)
-            .filter(d => d[1].id !== 0n)
-            .map(([_, v]) => [v.id, v] as const)
-    ))
-)() as Record<string, Dev>;
-
-export const TestcordDevsById = /* #__PURE__*/ (() =>
-    Object.freeze(Object.fromEntries(
-        Object.entries(TestcordDevs)
             .filter(d => d[1].id !== 0n)
             .map(([_, v]) => [v.id, v] as const)
     ))
