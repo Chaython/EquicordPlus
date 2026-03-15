@@ -49,6 +49,7 @@ export interface Settings {
     themeNames: Record<string, string>;
     enableReactDevtools: boolean;
     themeLinks: string[];
+    mainWindowFrameless: boolean;
     frameless: boolean;
     transparent: boolean;
     winCtrlQ: boolean;
@@ -116,6 +117,7 @@ const DefaultSettings: Settings = {
     pinnedThemes: [],
     themeNames: {},
     enableReactDevtools: false,
+    mainWindowFrameless: false,
     frameless: false,
     transparent: false,
     winCtrlQ: false,
@@ -291,6 +293,19 @@ export function migratePluginToSettings(deleteOldSettings: boolean, newName: str
 
         newPlugin.enabled = true;
         if (deleteOldSettings) delete plugins[oldName];
+        SettingsStore.markAsChanged();
+    }
+}
+
+export function migrateSettingToPlugin(newName: string, oldName: string, settingName: string) {
+    const { plugins } = SettingsStore.plain;
+    const newPlugin = plugins[newName];
+    const oldPlugin = plugins[oldName];
+
+    if (newPlugin && oldPlugin?.enabled && oldPlugin?.[settingName]) {
+        logger.info(`Migrating setting ${settingName} from ${oldName} to seperate plugin ${newName}`);
+        delete oldPlugin[settingName];
+        newPlugin.enabled = true;
         SettingsStore.markAsChanged();
     }
 }
