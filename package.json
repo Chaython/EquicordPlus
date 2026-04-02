@@ -82,14 +82,9 @@
         "eslint-plugin-unused-imports": "^4.3.0",
         "highlight.js": "11.11.1",
         "html-minifier-terser": "^7.2.0",
-<<<<<<< HEAD
         "moment": "^2.30.1",
-        "puppeteer-core": "^24.35.0",
-=======
-        "moment": "^2.22.2",
         "p-limit": "^7.3.0",
-        "puppeteer-core": "^24.30.0",
->>>>>>> upstream/main
+        "puppeteer-core": "^24.35.0",
         "standalone-electron-types": "^34.2.0",
         "stylelint": "^16.26.1",
         "stylelint-config-standard": "^39.0.1",
