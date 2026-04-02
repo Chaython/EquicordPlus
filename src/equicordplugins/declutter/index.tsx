@@ -6,7 +6,7 @@
 
 import "./style.css";
 
-import { definePluginSettings, migratePluginSetting, migratePluginSettings } from "@api/Settings";
+import { definePluginSettings, migrateOldSettingToNewPlugin, migratePluginSetting, migratePluginSettings } from "@api/Settings";
 import { Divider } from "@components/Divider";
 import { HeadingSecondary } from "@components/Heading";
 import { Notice } from "@components/Notice";
@@ -15,6 +15,7 @@ import { Devs, EquicordDevs } from "@utils/index";
 import definePlugin, { OptionType } from "@utils/types";
 
 migratePluginSettings("Declutter", "BetterUserArea", "Anammox");
+migrateOldSettingToNewPlugin("Declutter", "removeClanTag", "GuildTagSettings", "hideTags");
 
 const migrationsAnammox = [
     ["dms", "removeShopAboveDM"],
@@ -154,7 +155,7 @@ export default definePlugin({
         },
         {
             // Profile banner animation effect
-            find: "bannerAdjustment,noBorderRadius",
+            find: "bannerAdjustment,isHovering",
             replacement: {
                 match: /\i=\i=>\{(?=.{0,50}\.useReducedMotion\))/,
                 replace: "$&return null;"
@@ -172,7 +173,7 @@ export default definePlugin({
         },
         {
             // Always show username
-            find: ".DISPLAY_NAME_STYLES_COACHMARK),",
+            find: ".DISPLAY_NAME_STYLES_COACHMARK)",
             replacement: {
                 match: /hoverText:(\i),forceHover:\i,children:/g,
                 replace: "hoverText:$1,forceHover:!0,children:"

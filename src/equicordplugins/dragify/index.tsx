@@ -166,9 +166,9 @@ export default definePlugin({
     patches: [
         // Voice user rows (voice channel sidebar list)
         {
-            find: "location:\"VoiceUser\"",
+            find: '"system:click_outside","user:escape"',
             replacement: {
-                match: /(?<=previewIsOpen:.{0,100})"data-dnd-name":(\i)\.name,/,
+                match: /(?<=GuildChannelUserContextMenu.{0,100})"data-dnd-name":(\i)\.name,/,
                 replace: "$&\"data-dragify-user\":!0,\"data-user-id\":arguments[0].user?.id,draggable:!0,onDragStart:e=>$self.onUserDragStart(e,arguments[0].user),"
             }
         },
@@ -256,7 +256,7 @@ export default definePlugin({
         {
             find: "[aria-owns=folder-items-",
             replacement: {
-                match: /"data-dnd-name":(\i)\.name,(?="data-drop-hovering".{0,100}formatToPlainString\()/,
+                match: /"data-dnd-name":(\i)\.name,(?="data-drop-hovering".{0,300}"aria-selected":\i\}\)\}\))/,
                 replace: "$&draggable:!0,onDragStart:e=>$self.onGuildDragStart(e,$1.id),"
             }
         },

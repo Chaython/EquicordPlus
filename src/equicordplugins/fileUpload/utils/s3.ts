@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { toProxiedUrl } from "@equicordplugins/fileUpload/constants";
 import { settings } from "@equicordplugins/fileUpload/settings";
 import { PluginNative } from "@utils/types";
 
@@ -17,6 +18,7 @@ type S3Store = {
     s3PublicUrl?: string;
     s3Prefix?: string;
     s3ForcePathStyle?: boolean;
+    corsProxyUrl?: string;
 };
 
 const textEncoder = new TextEncoder();
@@ -187,7 +189,7 @@ export async function uploadToS3(
             throw new Error(result.error || "Upload failed");
         }
     } else {
-        const response = await fetch(uploadUrl.toString(), {
+        const response = await fetch(toProxiedUrl(uploadUrl.toString(), settings.store.corsProxyUrl), {
             method: "PUT",
             headers: requestHeaders,
             body: fileBlob

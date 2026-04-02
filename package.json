@@ -1,7 +1,7 @@
 {
     "name": "equicord",
     "private": "true",
-    "version": "1.14.5.0",
+    "version": "1.14.6.2",
     "description": "The other cutest Discord client mod",
     "homepage": "https://github.com/Equicord/Equicord#readme",
     "bugs": {
@@ -14,9 +14,9 @@
     "license": "GPL-3.0-or-later",
     "author": "Equicord",
     "scripts": {
-        "build": "node --require=./scripts/suppressExperimentalWarnings.js scripts/build/build.mjs",
+        "build": "pnpm depCheck && node --require=./scripts/suppressExperimentalWarnings.js scripts/build/build.mjs",
         "buildStandalone": "pnpm build --standalone",
-        "buildWeb": "node --require=./scripts/suppressExperimentalWarnings.js scripts/build/buildWeb.mjs",
+        "buildWeb": "pnpm depCheck && node --require=./scripts/suppressExperimentalWarnings.js scripts/build/buildWeb.mjs",
         "buildWebStandalone": "pnpm buildWeb --standalone",
         "buildReporter": "pnpm buildWebStandalone --reporter --skip-extension",
         "buildReporterDesktop": "pnpm build --reporter",
@@ -36,13 +36,14 @@
         "lint:fix": "pnpm lint --fix",
         "test": "pnpm buildStandalone && pnpm testTsc && pnpm lint:fix && pnpm lint-styles && pnpm generatePluginJson",
         "testWeb": "pnpm lint:fix && pnpm buildWeb && pnpm testTsc",
-        "testTsc": "tsc --noEmit"
+        "testTsc": "tsc --noEmit",
+        "depCheck": "node scripts/depCheck.mjs"
     },
     "dependencies": {
         "@ffmpeg/ffmpeg": "^0.12.15",
         "@ffmpeg/util": "^0.12.2",
         "@intrnl/xxhash64": "^0.1.2",
-        "@song-spotlight/api": "^2.0.1",
+        "@song-spotlight/api": "^2.1.3",
         "@streamparser/json": "^0.0.22",
         "@types/less": "^3.0.8",
         "@types/stylus": "^0.48.43",
@@ -81,8 +82,14 @@
         "eslint-plugin-unused-imports": "^4.3.0",
         "highlight.js": "11.11.1",
         "html-minifier-terser": "^7.2.0",
+<<<<<<< HEAD
         "moment": "^2.30.1",
         "puppeteer-core": "^24.35.0",
+=======
+        "moment": "^2.22.2",
+        "p-limit": "^7.3.0",
+        "puppeteer-core": "^24.30.0",
+>>>>>>> upstream/main
         "standalone-electron-types": "^34.2.0",
         "stylelint": "^16.26.1",
         "stylelint-config-standard": "^39.0.1",
@@ -95,7 +102,7 @@
         "typescript-transform-paths": "^3.5.6",
         "zip-local": "^0.3.5"
     },
-    "packageManager": "pnpm@10.30.3",
+    "packageManager": "pnpm@10.33.0",
     "pnpm": {
         "patchedDependencies": {
             "@types/less@3.0.8": "patches/@types__less@3.0.8.patch"

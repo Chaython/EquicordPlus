@@ -12,6 +12,7 @@ import { useForceUpdater } from "@utils/react";
 import { OptionType } from "@utils/types";
 import { React, Select, showToast, TextArea, TextInput, Toasts } from "@webpack/common";
 
+import { CORS_PROXY } from "./constants";
 import { ServiceType } from "./types";
 import { parseShareXConfig } from "./utils/sharex";
 
@@ -23,6 +24,11 @@ const serviceOptions = [
     { label: "Catbox.moe", value: ServiceType.CATBOX },
     ...(IS_DISCORD_DESKTOP ? [{ label: "0x0.st", value: ServiceType.ZEROX0 }] : []),
     { label: "Litterbox", value: ServiceType.LITTERBOX },
+    { label: "GoFile", value: ServiceType.GOFILE },
+    { label: "tmpfiles.org", value: ServiceType.TMPFILES },
+    { label: "buzzheavier.com", value: ServiceType.BUZZHEAVIER },
+    { label: "temp.sh", value: ServiceType.TEMPSH },
+    { label: "filebin.net", value: ServiceType.FILEBIN },
     { label: "ShareX Custom Uploader", value: ServiceType.SHAREX }
 ];
 
@@ -143,10 +149,58 @@ export const settings = definePluginSettings({
         default: "",
         hidden: true
     },
+    disableFallbacks: {
+        type: OptionType.BOOLEAN,
+        description: "Disable fallback upload services",
+        default: false,
+        hidden: true
+    },
+    autoSend: {
+        type: OptionType.BOOLEAN,
+        description: "Insert uploaded URL in chat input",
+        default: false,
+        hidden: true
+    },
+    autoFormat: {
+        type: OptionType.BOOLEAN,
+        description: "Wrap inserted URL in angle brackets",
+        default: false,
+        hidden: true
+    },
+    interceptDiscordUpload: {
+        type: OptionType.BOOLEAN,
+        description: "Intercept Discord uploads and use FileUpload instead.",
+        default: false,
+        hidden: true
+    },
+    interceptDiscordUploadOnlyOverLimit: {
+        type: OptionType.BOOLEAN,
+        description: "Only intercept uploads that exceed Discord file size limit.",
+        default: true,
+        hidden: true
+    },
+    gofileToken: {
+        type: OptionType.STRING,
+        description: "Optional GoFile API token",
+        default: "",
+        hidden: true
+    },
+    uploadTimeoutMs: {
+        type: OptionType.NUMBER,
+        description: "Upload timeout in milliseconds",
+        default: 300000,
+        hidden: true
+    },
     stripQueryParams: {
         type: OptionType.BOOLEAN,
         description: "Strip query params from uploaded URLs",
         default: false,
+        hidden: true
+    },
+    corsProxyUrl: {
+        type: OptionType.STRING,
+        description: "CORS proxy URL used for browser uploads",
+        default: CORS_PROXY,
         hidden: true
     },
     apngToGif: {
@@ -198,6 +252,7 @@ export function SettingsComponent() {
     const isZipline = store.serviceType === ServiceType.ZIPLINE;
     const isCatbox = store.serviceType === ServiceType.CATBOX;
     const isLitterbox = store.serviceType === ServiceType.LITTERBOX;
+    const isGofile = store.serviceType === ServiceType.GOFILE;
     const isShareX = store.serviceType === ServiceType.SHAREX;
 
     const validateShareXConfig = () => {
@@ -388,6 +443,16 @@ export function SettingsComponent() {
                 </SettingsSection>
             )}
 
+            {isGofile && (
+                <SettingTextInput
+                    name="GoFile Token"
+                    description="Optional GoFile token to upload into your account"
+                    value={store.gofileToken}
+                    onChange={v => store.gofileToken = v}
+                    placeholder="Optional GoFile token"
+                />
+            )}
+
             {isShareX && (
                 <>
                     <SettingsSection
@@ -424,6 +489,18 @@ export function SettingsComponent() {
                 />
             </SettingsSection>
 
+            <SettingTextInput
+                name="CORS Proxy URL"
+                description="CORS proxy used for web uploads. Leave empty to use the default proxy"
+                value={store.corsProxyUrl || ""}
+                onChange={v => store.corsProxyUrl = v}
+                placeholder="https://your-cors-proxy.example.com"
+            />
+
+            <SettingsSection name="Default CORS Proxy Source" description="Source code for the default CORS proxy">
+                <a href="https://codeberg.org/key/corsproxy" target="_blank" rel="noreferrer">codeberg.org/key/corsproxy</a>
+            </SettingsSection>
+
             <SettingsSection tag="label" name="Convert APNG to GIF" description="Convert APNG files to GIF format" inlineSetting>
                 <Switch
                     checked={store.apngToGif}
@@ -435,6 +512,60 @@ export function SettingsComponent() {
                 <Switch
                     checked={store.autoCopy}
                     onChange={v => store.autoCopy = v}
+                />
+            </SettingsSection>
+
+            <SettingsSection tag="label" name="Disable Fallback Uploaders" description="Only use the selected uploader without trying fallback hosts" inlineSetting>
+                <Switch
+                    checked={store.disableFallbacks}
+                    onChange={v => store.disableFallbacks = v}
+                />
+            </SettingsSection>
+
+            <SettingsSection tag="label" name="Insert URL into Chat Input" description="After upload, insert the resulting URL into the current chat input" inlineSetting>
+                <Switch
+                    checked={store.autoSend}
+                    onChange={v => store.autoSend = v}
+                />
+            </SettingsSection>
+
+            <SettingsSection tag="label" name="Format Inserted URL" description="Wrap inserted URLs in angle brackets to avoid Discord preview embedding" inlineSetting>
+                <Switch
+                    checked={store.autoFormat}
+                    onChange={v => store.autoFormat = v}
+                />
+            </SettingsSection>
+
+            <SettingsSection tag="label" name="Intercept Discord Upload Button" description="Use FileUpload when uploading through Discord's file picker" inlineSetting>
+                <Switch
+                    checked={Boolean((store as { interceptDiscordUpload?: boolean; }).interceptDiscordUpload)}
+                    onChange={v => (store as { interceptDiscordUpload?: boolean; }).interceptDiscordUpload = v}
+                />
+            </SettingsSection>
+
+            <SettingsSection tag="label" name="Only Intercept Over Discord File Size Limit" description="Use FileUpload only for files larger than your current Discord upload limit" inlineSetting>
+                <Switch
+                    checked={store.interceptDiscordUploadOnlyOverLimit}
+                    onChange={v => store.interceptDiscordUploadOnlyOverLimit = v}
+                />
+            </SettingsSection>
+
+            <SettingsSection name="Upload Timeout" description="Maximum time to wait per upload attempt before switching to fallback">
+                <Select
+                    options={[
+                        { label: "30 seconds", value: 30000 },
+                        { label: "1 minute", value: 60000 },
+                        { label: "2 minutes", value: 120000 },
+                        { label: "5 minutes", value: 300000, default: true },
+                        { label: "10 minutes", value: 600000 }
+                    ]}
+                    isSelected={v => v === (store.uploadTimeoutMs || 300000)}
+                    select={v => {
+                        store.uploadTimeoutMs = v;
+                        update();
+                    }}
+                    serialize={v => v}
+                    placeholder="Select timeout"
                 />
             </SettingsSection>
         </>
