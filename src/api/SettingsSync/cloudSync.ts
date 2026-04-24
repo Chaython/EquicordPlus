@@ -20,16 +20,17 @@ import { ManifestEntry, SyncRequest, SyncResponse } from "./types";
 const logger = new Logger("SettingsSync:Cloud", "#39b7e0");
 
 const MANIFEST_STORE_KEY = "Vencord_cloudManifest";
-const API_VERSION_KEY = "Vencord_cloudApiVersion";
 
 type ApiVersion = "v2" | "v1";
 
+let apiVersion: ApiVersion = "v2";
+
 async function getApiVersion(): Promise<ApiVersion> {
-    return await DataStore.get<ApiVersion>(API_VERSION_KEY) ?? "v2";
+    return apiVersion;
 }
 
 async function setApiVersion(version: ApiVersion) {
-    await DataStore.set(API_VERSION_KEY, version);
+    apiVersion = version;
 }
 
 function toBase64(data: Uint8Array): string {
@@ -69,6 +70,9 @@ async function buildLocalData(): Promise<Map<string, Uint8Array>> {
 
     const quickCss = await VencordNative.quickCss.get();
     if (quickCss) data.set("quickCss", encoder.encode(quickCss));
+
+    const dataStoreEntries = await DataStore.entries();
+    if (dataStoreEntries) data.set("dataStore", encoder.encode(JSON.stringify(dataStoreEntries)));
 
     return data;
 }
@@ -126,9 +130,8 @@ async function doSyncV2(uploads: SyncRequest["uploads"], clientManifest: Manifes
             },
             body: JSON.stringify({ client_manifest: clientManifest, uploads } satisfies SyncRequest),
         });
-    } catch {
-        logger.info("Server does not support v2, falling back to v1");
-        await setApiVersion("v1");
+    } catch (e) {
+        logger.error("v2 sync network error, will retry next sync", e);
         return null;
     }
 
@@ -265,7 +268,7 @@ async function deleteV2() {
         return;
     }
 
-    const { entries }: { entries: ManifestEntry[] } = await manifestRes.json();
+    const { entries }: { entries: ManifestEntry[]; } = await manifestRes.json();
 
     await Promise.all(entries.map(async entry => {
         const res = await fetch(new URL(`/v2/data/${encodeURIComponent(entry.key)}`, getCloudUrl()), {

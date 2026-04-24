@@ -1101,8 +1101,9 @@ const messageSendListener = (_channelId: string, messageObj: { content: string; 
 export default definePlugin({
     name: "FavoriteEmojiFirst",
     authors: [Devs.Aria, Devs.Ven, EquicordDevs.justjxke],
-    tags: ["EmojiAlias"],
+    tags: ["Emotes", "Customisation"],
     description: "Puts your favorite emoji first in the emoji autocomplete and also has emoji alias.",
+    dependencies: ["MessagePopoverAPI"],
     settings,
     contextMenus: {
         "expression-picker": expressionPickerPatch,
@@ -1142,7 +1143,7 @@ export default definePlugin({
                     replace: "$1Infinity"
                 },
                 {
-                    match: /(\i)\.slice\(0,(Math\.max\(\i,\i(?:-\i\.length){2}\))\)/,
+                    match: /(\i)\.slice\(0,(Math\.max\(\d+?,\i(?:-\i\.length){2}\))\)/,
                     replace: "($1.sliceTo = $2, $1)"
                 }
             ]

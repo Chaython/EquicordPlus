@@ -26,7 +26,7 @@ import { JSX } from "react";
 const SMYNC = classNameFactory();
 const UserStore = findStoreLazy("UserStore");
 const wrapEmojis = findByCodeLazy("lastIndex;return");
-const adjustColor = findByCodeLazy("light1", "dark1", "toonStroke");
+const adjustColor = findByCodeLazy("light1", '.get("hsl.s"))');
 const AccessibilityStore = findStoreLazy("AccessibilityStore");
 
 const roleColorPattern = /^role((?:\+|-)\d{0,4})?$/iu;
@@ -1069,7 +1069,8 @@ export default definePlugin({
     name: "ShowMeYourName",
     description: "Display any permutation of custom nicknames, friend nicknames, server nicknames, display names, and usernames in chat.",
     authors: [EquicordDevs.Etorix, Devs.Rini, Devs.TheKodeToad, Devs.sadan, Devs.prism],
-    tags: ["SMYN", "Nicknames", "Custom Nicknames",],
+    tags: ["Appearance", "Customisation"],
+    searchTerms: ["SMYN", "Nicknames", "Custom Nicknames"],
     isModified: true,
     settings,
 
@@ -1121,7 +1122,7 @@ export default definePlugin({
             // because the name is the same as the username.
             find: "location:\"DiscordTag\"});",
             replacement: {
-                match: /(?<=forceUsername:(\i),.{0,550}?displayNameStyles:)\i!==\i\?(\i.displayNameStyles):null/,
+                match: /(?<=,forceUsername:(\i),.*?displayNameStyles:)\i!==\i\?(\i.displayNameStyles):null/,
                 replace: "!$1?$2:null"
             },
         },
@@ -1138,7 +1139,7 @@ export default definePlugin({
             // Attach the group ID to their messages to allow animating gradients within a group.
             find: "CUSTOM_GIFT?\"\":",
             replacement: {
-                match: /(isHovered:(\i).{0,1300}?\(\i,\i,\i\);)(let \i=\i.id===\i)/,
+                match: /(isHovered:(\i).{0,1300})(let \i=\i.id===\i,\i=)/,
                 replace: "$1arguments[0].message.showMeYourNameGroupId=!!arguments[0].groupId?`g-${arguments[0].groupId}`:null;$self.handleHoveringMessage(arguments[0].message,$2);$3"
             },
         },

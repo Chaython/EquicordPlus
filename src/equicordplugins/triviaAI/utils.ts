@@ -4,10 +4,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { sendBotMessage } from "@api/Commands";
 import { insertTextIntoChatInputBox, sendMessage } from "@utils/discord";
 import { Logger } from "@utils/Logger";
 import { Message } from "@vencord/discord-types";
-import { showToast, Toasts } from "@webpack/common";
+import { MessageStore, showToast, Toasts, UserStore } from "@webpack/common";
 
 import { settings } from "./settings";
 
@@ -27,6 +28,66 @@ type ImagePart = {
 };
 
 export type ContentPayload = string | (TextPart | ImagePart)[];
+
+export type ApiMessage = {
+    role: "user" | "assistant";
+    content: ContentPayload;
+};
+
+export function getPayload(message: Message): ApiMessage[] | null {
+    const prevMessages = getPreviousMessages(message, settings.store.context);
+    const allMessages = [...prevMessages, message];
+
+    const currentUserId = UserStore.getCurrentUser().id;
+
+    const payload: ApiMessage[] = [];
+
+    for (const msg of allMessages) {
+        const parsed = parseMessageContent(msg);
+        if (!parsed) continue;
+
+        const isOwn = msg.author?.id === currentUserId;
+        const isTargetMessage = msg.id === message.id;
+        const role = (isOwn && !isTargetMessage && settings.store.treatSelfAsAssistant) ? "assistant" : "user";
+
+        let content = parsed;
+
+        if (!isOwn && settings.store.passMessageAuthorName) {
+            const username = msg.author?.username ?? "Unknown";
+            const prefix = `${username}: `;
+
+            if (typeof parsed === "string") {
+                content = prefix + parsed;
+            } else if (Array.isArray(parsed)) {
+                content = [...parsed];
+                const firstTextIdx = content.findIndex(p => p.type === "text");
+
+                if (firstTextIdx !== -1) {
+                    content[firstTextIdx] = {
+                        type: "text",
+                        text: prefix + (content[firstTextIdx] as TextPart).text
+                    };
+                } else {
+                    content.unshift({
+                        type: "text",
+                        text: prefix
+                    });
+                }
+            }
+        }
+
+        payload.push({ role, content });
+    }
+
+    return payload.length > 0 ? payload : null;
+}
+
+export function getPreviousMessages(message: Message, count: number): Message[] {
+    const allMessages: Message[] = MessageStore.getMessages(message.channel_id)._array;
+    const idx = allMessages.findIndex(m => m.id === message.id);
+    if (idx <= 0 || count === 0) return [];
+    return allMessages.slice(Math.max(0, idx - count), idx);
+}
 
 export function parseMessageContent(message: Message): ContentPayload | null {
     const textParts: string[] = [];
@@ -102,33 +163,38 @@ export function parseMessageContent(message: Message): ContentPayload | null {
 }
 
 export async function handleResponse(message: Message, response: string): Promise<string> {
-    if (settings.store.autoRespond) {
-        sendMessage(
-            message.channel_id,
-            { content: response },
-            true,
-            { messageReference: { channel_id: message.channel_id, message_id: message.id } }
-        );
-        return response;
-    } else {
-        insertTextIntoChatInputBox(response);
-        return response;
+    switch (settings.store.mode) {
+        case "autoreply":
+            sendMessage(
+                message.channel_id,
+                { content: response },
+                true,
+                { messageReference: { channel_id: message.channel_id, message_id: message.id } }
+            );
+            break;
+        case "chatbar":
+            insertTextIntoChatInputBox(response);
+            break;
+        case "bot":
+            sendBotMessage(message.channel_id, { content: response });
+            break;
     }
+
+    return response;
 }
 
-export async function getResponse(payload: ContentPayload): Promise<string> {
-    if (!settings.store.apiKey) {
-        showToast("TriviaAI: API Key is not set.", Toasts.Type.FAILURE);
-        return "";
-    }
+function getSystemPrompt() {
+    const currentUser = UserStore.getCurrentUser();
+    const currentTime = new Date().toString();
 
-    if (!settings.store.endpoint) {
-        showToast("TriviaAI: Endpoint is not set.", Toasts.Type.FAILURE);
-        return "";
-    }
+    return settings.store.systemPrompt
+        .replace(/{current_user}/g, currentUser?.username ?? "Unknown User")
+        .replace(/{current_time}/g, currentTime);
+}
 
-    if (!settings.store.model) {
-        showToast("TriviaAI: Model is not set.", Toasts.Type.FAILURE);
+export async function getResponse(payload: ApiMessage[]): Promise<string> {
+    if (!settings.store.apiKey || !settings.store.endpoint || !settings.store.model) {
+        showToast("TriviaAI: API settings are incomplete.", Toasts.Type.FAILURE);
         return "";
     }
 
@@ -144,36 +210,28 @@ export async function getResponse(payload: ContentPayload): Promise<string> {
                 messages: [
                     {
                         role: "system",
-                        content: settings.store.systemPrompt
+                        content: getSystemPrompt()
                     },
-                    {
-                        role: "user",
-                        content: payload
-                    }
+                    ...payload
                 ],
                 max_tokens: settings.store.maxTokens,
             })
         });
 
-        if (!req.ok) {
-            const errorBody = await req.text();
-            const errorMessage = `API request failed with status ${req.status}: ${errorBody}`;
-            logger.error(errorMessage);
-            showToast(errorMessage, Toasts.Type.FAILURE);
+        const rawBody = await req.text();
+        const data: { error?: { message?: string; }, choices?: { message: { content: string; }; }[]; } = (() => {
+            try { return JSON.parse(rawBody); }
+            catch { return {}; }
+        })();
+
+        if (!req.ok || data.error) {
+            const errorMsg = data.error?.message ?? rawBody ?? `Status ${req.status}`;
+            logger.error(`API Error: ${errorMsg}`);
+            showToast(errorMsg, Toasts.Type.FAILURE);
             return "";
         }
 
-        const data = await req.json();
-
-        if (data.error) {
-            const errorMessage = data.error.message ?? "An unknown error occurred";
-            logger.error(`API Error: ${errorMessage}`);
-            showToast(errorMessage, Toasts.Type.FAILURE);
-            return "";
-        }
-
-        const response = data.choices[0].message.content;
-
+        const response = data.choices?.[0]?.message?.content;
         if (!response?.trim()) {
             logger.warn("no response from AI model");
             return "";

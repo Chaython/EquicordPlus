@@ -37,6 +37,8 @@ migratePluginToSettings(true, "MoreUserTags", "NoAppsAllowed", "noAppsAllowed");
 export default definePlugin({
     name: "MoreUserTags",
     description: "Adds tags for webhooks and moderative roles (owner, admin, etc.)",
+    dependencies: ["MemberListDecoratorsAPI", "MessageDecorationsAPI", "NicknameIconsAPI"],
+    tags: ["Appearance", "Chat"],
     authors: [Devs.Cyn, Devs.TheSun, Devs.RyanCaoDev, Devs.LordElias, Devs.AutumnVN, EquicordDevs.Hen, EquicordDevs.meowabyte],
     settings,
     patches: [
@@ -63,7 +65,8 @@ export default definePlugin({
             predicate: () => settings.store.noAppsAllowed,
             replacement: {
                 match: /(#{intl::APP_TAG::hash}":\[").*?("\])/,
-                replace: "$1BOT$2"
+                replace: "$1BOT$2",
+                noWarn: true,
             }
         }
     ],

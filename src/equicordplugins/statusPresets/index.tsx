@@ -57,7 +57,7 @@ interface DiscordStatus {
 }
 
 // TODO: find clearCustomStatusHint original css/svg or replace
-const PMenu = findComponentByCodeLazy("#{intl::MORE_OPTIONS}", ".ChevronSmallRightIcon");
+const PMenu = findComponentByCodeLazy("#{intl::MORE_OPTIONS}", ",renderSubmenu:");
 const EmojiComponent = findComponentByCodeLazy(/\.translateSurrogatesToInlineEmoji\(\i\.name\);/);
 
 const CustomStatusSettings = getUserSettingLazy("status", "customStatus")!;
@@ -144,6 +144,7 @@ const StatusSubMenuComponent = () => {
 export default definePlugin({
     name: "StatusPresets",
     description: "Allows you to remember your statuses and set them later",
+    tags: ["Activity", "Utility"],
     authors: [EquicordDevs.iamme],
     settings: settings,
     dependencies: ["UserSettingsAPI"],
@@ -159,7 +160,7 @@ export default definePlugin({
         {
             find: "#{intl::STATUS_MENU_LABEL}",
             replacement: {
-                match: /(:void 0\}\))\]/,
+                match: /(,\{onClose:\i\}\))\]/,
                 replace: "$1,$self.render()]"
             }
         }

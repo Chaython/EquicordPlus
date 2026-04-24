@@ -8,7 +8,7 @@ import { ApplicationCommandInputType, sendBotMessage } from "@api/Commands";
 import { HeaderBarButton } from "@api/HeaderBar";
 import { addMessagePreSendListener, removeMessagePreSendListener } from "@api/MessageEvents";
 import { isPluginEnabled } from "@api/PluginManager";
-import { definePluginSettings, migratePluginToSettings } from "@api/Settings";
+import { definePluginSettings, migratePluginToSettings, Settings } from "@api/Settings";
 import customRPC from "@plugins/customRPC";
 import { Devs, EquicordDevs, GUILD_ID, SUPPORT_CHANNEL_ID, SUPPORT_CHANNEL_IDS, VC_SUPPORT_CHANNEL_IDS } from "@utils/constants";
 import { isAnyPluginDev } from "@utils/misc";
@@ -125,14 +125,22 @@ const settings = definePluginSettings({
     disableAdoptTagPrompt: {
         type: OptionType.BOOLEAN,
         description: "Disable the prompt to adopt tags",
-        default: true,
-        restartNeeded: true
+        restartNeeded: true,
+        default: false,
     },
+    jsonGateway: {
+        type: OptionType.BOOLEAN,
+        description: "Forces JSON on gateway reconnect",
+        restartNeeded: true,
+        default: false,
+    }
 });
 
 export default definePlugin({
     name: "EquicordHelper",
     description: "Used to provide support, fix discord caused crashes, and other misc features.",
+    tags: ["Appearance", "Commands", "Utility"],
+    dependencies: ["CommandsAPI", "HeaderBarAPI", "MessageAccessoriesAPI"],
     authors: [
         Devs.thororen,
         EquicordDevs.nyx,
@@ -272,6 +280,36 @@ export default definePlugin({
                 replace: "return null;$&"
             },
             predicate: () => settings.store.disableAdoptTagPrompt
+        },
+        {
+            find: "JSONEncoding",
+            replacement: {
+                match: /void 0!==\i\?\i:/,
+                replace: ""
+            },
+            predicate: () => settings.store.jsonGateway
+        },
+        {
+            find: ".USE_OSX_NATIVE_TRAFFIC_LIGHTS",
+            predicate: () => Settings.winNativeTitleBar,
+            replacement: {
+                match: /case \i\.\i\.WINDOWS:/,
+                replace: 'case "WEB":'
+            },
+        },
+        {
+            find: '"refresh-title-bar-small"',
+            predicate: () => Settings.winNativeTitleBar,
+            replacement: [
+                {
+                    match: /\i===\i\.PlatformTypes\.WINDOWS/g,
+                    replace: "false"
+                },
+                {
+                    match: /\i===\i\.PlatformTypes\.WEB/g,
+                    replace: "true"
+                }
+            ]
         }
     ],
     renderMessageAccessory(props) {

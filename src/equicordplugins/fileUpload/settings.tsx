@@ -10,7 +10,7 @@ import { SettingsSection } from "@components/settings/tabs/plugins/components/Co
 import { Switch } from "@components/Switch";
 import { useForceUpdater } from "@utils/react";
 import { OptionType } from "@utils/types";
-import { React, Select, showToast, TextArea, TextInput, Toasts } from "@webpack/common";
+import { ManaTextArea, React, Select, showToast, TextInput, Toasts } from "@webpack/common";
 
 import { CORS_PROXY } from "./constants";
 import { ServiceType } from "./types";
@@ -37,6 +37,11 @@ const litterboxOptions = [
     { label: "12 hours", value: "12h" },
     { label: "24 hours", value: "24h", default: true },
     { label: "72 hours", value: "72h" }
+];
+
+const embedProxyOptions = [
+    { label: "CORS Proxy", value: "cors", default: true },
+    { label: "discord.nfp.is", value: "nfp" }
 ];
 
 export const settings = definePluginSettings({
@@ -197,6 +202,19 @@ export const settings = definePluginSettings({
         default: false,
         hidden: true
     },
+    embedProxyEnabled: {
+        type: OptionType.BOOLEAN,
+        description: "Proxy uploaded video links through an embed helper service.",
+        default: false,
+        hidden: true
+    },
+    embedProxyService: {
+        type: OptionType.SELECT,
+        description: "Embed helper service to wrap uploaded video links.",
+        options: embedProxyOptions,
+        default: "cors",
+        hidden: true
+    },
     corsProxyUrl: {
         type: OptionType.STRING,
         description: "CORS proxy URL used for browser uploads",
@@ -207,6 +225,12 @@ export const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         description: "Convert APNG uploads to GIF",
         default: false,
+        hidden: true
+    },
+    preserveOriginalFilename: {
+        type: OptionType.BOOLEAN,
+        description: "Preserve the original filename when uploading.",
+        default: true,
         hidden: true
     },
     autoCopy: {
@@ -459,7 +483,7 @@ export function SettingsComponent() {
                         name="ShareX Custom Uploader Config"
                         description="Paste your ShareX custom uploader JSON (.sxcu/.json). DestinationType must include FileUploader or ImageUploader."
                     >
-                        <TextArea
+                        <ManaTextArea
                             value={store.sharexConfig}
                             rows={10}
                             placeholder='{"RequestMethod":"POST","RequestURL":"https://example.com/api/upload","Body":"MultipartFormData"}'
@@ -489,6 +513,31 @@ export function SettingsComponent() {
                 />
             </SettingsSection>
 
+            <SettingsSection tag="label" name="Use Embed Proxy" description="Wrap uploaded video links with an embed proxy service for better Discord previews" inlineSetting>
+                <Switch
+                    checked={store.embedProxyEnabled}
+                    onChange={v => {
+                        store.embedProxyEnabled = v;
+                        update();
+                    }}
+                />
+            </SettingsSection>
+
+            {store.embedProxyEnabled && (
+                <SettingsSection name="Embed Proxy Service" description="Choose which embed proxy service to use for uploaded video links">
+                    <Select
+                        options={embedProxyOptions}
+                        isSelected={v => v === store.embedProxyService}
+                        select={v => {
+                            store.embedProxyService = v;
+                            update();
+                        }}
+                        serialize={v => v}
+                        placeholder="Select an embed proxy service"
+                    />
+                </SettingsSection>
+            )}
+
             <SettingTextInput
                 name="CORS Proxy URL"
                 description="CORS proxy used for web uploads. Leave empty to use the default proxy"
@@ -505,6 +554,13 @@ export function SettingsComponent() {
                 <Switch
                     checked={store.apngToGif}
                     onChange={v => store.apngToGif = v}
+                />
+            </SettingsSection>
+
+            <SettingsSection tag="label" name="Preserve Original Filename" description="Use the original filename instead of naming uploads as upload.ext" inlineSetting>
+                <Switch
+                    checked={Boolean((store as { preserveOriginalFilename?: boolean; }).preserveOriginalFilename)}
+                    onChange={v => (store as { preserveOriginalFilename?: boolean; }).preserveOriginalFilename = v}
                 />
             </SettingsSection>
 

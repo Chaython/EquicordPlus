@@ -20,14 +20,14 @@ import { Paragraph } from "@components/Paragraph";
 import { openContributorModal, openPluginModal, SettingsTab, wrapTab } from "@components/settings";
 import { QuickAction, QuickActionCard } from "@components/settings/QuickAction";
 import { SpecialCard } from "@components/settings/SpecialCard";
+import BadgeAPI from "@plugins/_api/badges";
 import { gitRemote } from "@shared/vencordUserAgent";
 import { DONOR_ROLE_ID, GUILD_ID, IS_MAC, IS_WINDOWS, VC_DONOR_ROLE_ID, VC_GUILD_ID } from "@utils/constants";
 import { classNameFactory } from "@utils/css";
 import { Margins } from "@utils/margins";
 import { identity, isAnyPluginDev } from "@utils/misc";
 import { relaunch } from "@utils/native";
-import { GuildMemberStore, React, Select, UserStore } from "@webpack/common";
-import BadgeAPI from "plugins/_api/badges";
+import { Alerts, GuildMemberStore, React, Select, UserStore } from "@webpack/common";
 
 import { DonateButtonComponent } from "./DonateButton";
 import { openNotificationSettingsModal } from "./NotificationSettings";
@@ -249,7 +249,19 @@ function EquicordSettings() {
                     <FormSwitch
                         key={s.key}
                         value={settings[s.key]}
-                        onChange={v => (settings[s.key] = v)}
+                        onChange={v => {
+                            settings[s.key] = v;
+
+                            if (s.restartRequired) {
+                                Alerts.show({
+                                    title: "Restart Required",
+                                    body: "A restart is required to apply this change",
+                                    confirmText: "Restart now",
+                                    cancelText: "Later!",
+                                    onConfirm: relaunch
+                                });
+                            }
+                        }}
                         title={s.title}
                         description={
                             s.warning.enabled ? (
