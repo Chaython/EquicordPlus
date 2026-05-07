@@ -74,7 +74,7 @@ function interceptUploadAddFiles(event: unknown): void {
 
     if (payload.draftType !== DraftType.ChannelMessage) return;
 
-    if (!Boolean((settings.store as { interceptDiscordUpload?: boolean; }).interceptDiscordUpload) || !isConfigured()) return;
+    if (!settings.store.bypassDiscordUpload || !isConfigured()) return;
 
     const files = [
         ...extractFilesFromValue(payload.files),
@@ -104,6 +104,21 @@ function handlePaste(event: ClipboardEvent) {
     void uploadProvidedFiles(files);
 }
 
+function formatBytes(bytes: number): string {
+    if (!bytes) return "";
+
+    const units = ["B", "KB", "MB", "GB"];
+    let value = bytes;
+    let unitIndex = 0;
+
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex++;
+    }
+
+    return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
 const ProgressBarInner = () => {
     const [state, setState] = useState(getUploadState);
 
@@ -112,6 +127,9 @@ const ProgressBarInner = () => {
     if (state.phase === "idle") return null;
 
     const percentage = Math.max(0, Math.min(100, state.percent));
+    const progressLabel = state.totalBytes > 0
+        ? `${Math.round(percentage)}% - ${formatBytes(state.transferredBytes)} of ${formatBytes(state.totalBytes)}`
+        : `${Math.round(percentage)}%`;
 
     return (
         <div
@@ -123,6 +141,9 @@ const ProgressBarInner = () => {
                     {state.status || "Uploading..."}
                 </div>
                 <div className={cl("progress-meta")}>
+                    <span className={cl("progress-percent")}>
+                        {progressLabel}
+                    </span>
                     <span className={cl("progress-attempt")}>
                         {state.attempt > 0 && state.totalAttempts > 0 ? `${state.attempt}/${state.totalAttempts}` : ""}
                     </span>
@@ -283,7 +304,7 @@ export default definePlugin({
         }
     },
     shouldBypassDiscordUploadSizeCheck(): boolean {
-        return Boolean((settings.store as { interceptDiscordUpload?: boolean; }).interceptDiscordUpload) && isConfigured();
+        return Boolean(settings.store.bypassDiscordUpload) && isConfigured();
     },
     renderUploadProgress() {
         return <ProgressBar />;

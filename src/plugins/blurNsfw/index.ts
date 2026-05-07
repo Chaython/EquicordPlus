@@ -12,20 +12,6 @@ import definePlugin, { OptionType } from "@utils/types";
 
 let style: HTMLStyleElement;
 
-function setCss() {
-    style.textContent = `
-        .vc-nsfw-img [class*=imageContainer],
-        .vc-nsfw-img [class*=wrapperPaused] {
-            filter: blur(${settings.store.blurAmount}px);
-            transition: filter 0.2s;
-
-            &:hover {
-                filter: blur(0);
-            }
-        }
-        `;
-}
-
 const settings = definePluginSettings({
     blurAmount: {
         type: OptionType.NUMBER,
@@ -39,6 +25,20 @@ const settings = definePluginSettings({
         default: false
     },
 });
+
+function setCss() {
+    style.textContent = `
+        .vc-nsfw-img [class*=imageContainer],
+        .vc-nsfw-img [class*=wrapperPaused] {
+            filter: blur(${settings.store.blurAmount}px);
+            transition: filter 0.2s;
+
+            &:hover {
+                filter: blur(0);
+            }
+        }
+        `;
+}
 
 export default definePlugin({
     name: "BlurNSFW",
@@ -54,7 +54,7 @@ export default definePlugin({
             replacement: [
                 {
                     match: /(\.renderReactions\(\i\).+?className:)/,
-                    replace: '$&(this.props?.channel?.nsfw || $self.settings.store.blurAllChannels ? "vc-nsfw-img ": "")+'
+                    replace: '$&(this?.props?.channel?.nsfw || $self.settings.store.blurAllChannels ? "vc-nsfw-img ": "")+'
                 }
             ]
         }
