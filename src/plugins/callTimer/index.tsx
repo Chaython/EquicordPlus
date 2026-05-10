@@ -7,7 +7,7 @@
 import { definePluginSettings } from "@api/Settings";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Devs, EquicordDevs } from "@utils/constants";
-import { useTimer } from "@utils/react";
+import { useFixedTimer } from "@utils/react";
 import { formatDurationMs } from "@utils/text";
 import definePlugin, { OptionType } from "@utils/types";
 import { PassiveUpdateState, VoiceState } from "@vencord/discord-types";
@@ -71,7 +71,7 @@ export const settings = definePluginSettings({
 });
 
 // Save the join time of all users in a Map
-type userJoinData = { channelId: string, time: number; guildId: string; };
+type userJoinData = { channelId: string, time: number; guildId: string | null; };
 const userJoinTimes = new Map<string, userJoinData>();
 
 /**
@@ -84,7 +84,7 @@ const userJoinTimes = new Map<string, userJoinData>();
  * unique identifier of the guild (server) to which the user belongs. It is used to associate the
  * user's join time with a specific guild within the application or platform.
  */
-function addUserJoinTime(userId: string, channelId: string, guildId: string) {
+function addUserJoinTime(userId: string, channelId: string, guildId: string | null) {
     // create a random number
     userJoinTimes.set(userId, { channelId, time: Date.now(), guildId });
 }
@@ -152,11 +152,6 @@ export default definePlugin({
                 const { userId, channelId, guildId } = state;
                 const isMe = userId === myId;
 
-                if (!guildId) {
-                    // guildId is never undefined here
-                    continue;
-                }
-
                 // check if the state does not actually has a `oldChannelId` property
                 if (!("oldChannelId" in state) && !runOneTime && !settings.store.watchLargeGuilds) {
                     // batch update triggered. This is ignored because it
@@ -173,7 +168,7 @@ export default definePlugin({
                 if (channelId !== oldChannelId) {
                     if (channelId) {
                         // move or join
-                        addUserJoinTime(userId, channelId, guildId);
+                        addUserJoinTime(userId, channelId, guildId ?? null);
                     } else if (oldChannelId) {
                         // leave
                         removeUserJoinTime(userId);
@@ -264,16 +259,17 @@ export default definePlugin({
         );
     },
 
-    renderConnectionTimer(channelId: string) {
+    renderConnectionTimer({ channelId }: { channelId: string | undefined; }) {
         return <ErrorBoundary noop>
             <this.ConnectionTimer channelId={channelId} />
         </ErrorBoundary>;
     },
 
-    ConnectionTimer: ErrorBoundary.wrap(({ channelId }: { channelId: string; }) => {
-        const time = useTimer({
-            deps: [channelId]
-        });
+    ConnectionTimer: ErrorBoundary.wrap((_: { channelId: string | undefined; }) => {
+        const joinTime = userJoinTimes.get(UserStore.getCurrentUser().id)?.time;
+        const time = useFixedTimer({ initialTime: joinTime });
+
+        if (joinTime == null) return null;
 
         return (
             <p style={{ margin: 0, fontFamily: "var(--font-code)" }}>
