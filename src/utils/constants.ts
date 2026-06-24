@@ -27,7 +27,7 @@ export const EQUICORD_TEAM = "1173520023239786538";
 export const EQUICORD_HELPERS = "1326406112144265257";
 export const VENCORD_CONTRIB_ROLE_ID = "1173343399470964856";
 export const EQUIBOT_USER_ID = "1243063117852835941";
-export const TESTCORD_GUILD_ID = "1173279886065029291";
+export const KNOWN_ISSUES_CHANNEL_ID = "1466558228379992266";
 
 // Vencord
 export const VC_SUPPORT_CHANNEL_ID = "1026515880080842772";
@@ -37,7 +37,7 @@ export const VC_DONOR_ROLE_ID = "1042507929485586532";
 export const VC_CONTRIB_ROLE_ID = "1026534353167208489";
 export const VC_REGULAR_ROLE_ID = "1026504932959977532";
 export const VC_SUPPORT_CATEGORY_ID = "1108135649699180705";
-export const VC_KNOWN_ISSUES_CHANNEL_ID = "1222936386626129920";
+export const VC_KNOWN_ISSUES_CHANNEL_ID = "1257025907625951423";
 export const VESKTOP_SUPPORT_CHANNEL_ID = "1345457031426871417";
 export const VC_SUPPORT_CHANNEL_IDS = [VC_SUPPORT_CHANNEL_ID, VESKTOP_SUPPORT_CHANNEL_ID];
 
@@ -658,16 +658,16 @@ export const Devs = /* #__PURE__*/ Object.freeze({
         name: "prism",
         id: 390884143749136386n,
     },
+    nightmaresan: {
+        name: "NightmareSan",
+        id: 304239816466235392n
+    },
 } satisfies Record<string, Dev>);
 
 export const EquicordDevs = Object.freeze({
     nobody: {
         name: "nobody",
         id: 0n
-    },
-    yafyx: {
-        name: "kiniyaku",
-        id: 658209494609821699n
     },
     thororen: {
         name: "thororen",
@@ -889,10 +889,6 @@ export const EquicordDevs = Object.freeze({
         name: "bep",
         id: 0n
     },
-    Benjii: {
-        name: "Benjii",
-        id: 463702169443368970n
-    },
     llytz: {
         name: "llytz",
         id: 1271128098301022240n
@@ -958,9 +954,9 @@ export const EquicordDevs = Object.freeze({
         name: "castdrian",
         id: 224617799434108928n
     },
-    echo: {
-        name: "ECHO",
-        id: 712639419785412668n
+    amy: {
+        name: "Amy",
+        id: 603229858612510720n
     },
     RyanCaoDev: {
         name: "RyanCaoDev",
@@ -1049,10 +1045,6 @@ export const EquicordDevs = Object.freeze({
     Loukios: {
         name: "Loukios",
         id: 211461918127292416n
-    },
-    qdnx: {
-        name: "qdnx",
-        id: 1374803023506702508n
     },
     vappstar: {
         name: "vappstar",
@@ -1338,36 +1330,29 @@ export const EquicordDevs = Object.freeze({
         name: "NassCT",
         id: 354996937868705793n
     },
+    yafyx: {
+        name: "kiniyaku",
+        id: 658209494609821699n
+    },
     dhopcs: {
         name: "dhopcs",
         id: 206309860038410240n
     },
-} satisfies Record<string, Dev>);
-
-export const TestcordDevs = Object.freeze({
-    x2b: {
-        name: "x2b",
-        id: 996137713432530976n
+    qdnx: {
+        name: "qdnx",
+        id: 1374803023506702508n
     },
-    Benjii: {
-        name: "Benjii",
-        id: 463702169443368970n
+    BachLe2000: {
+        name: "BachLe2000",
+        id: 624091967625625610n
     },
-    babystarsz: {
-        name: "babystarsz",
-        id: 1455985625441501209n
+    pandaptable: {
+        name: "pandaptable",
+        id: 97153209843335168n
     },
-    vampireslover: {
-        name: "vampireslover",
-        id: 1455033270709256284n
-    },
-    czox: {
-        name: "czokapika",
-        id: 484404620580618250n
-    },
-    dxrx99: {
-        name: "dxrx99",
-        id: 1463629522359423152n
+    SobakinTech: {
+        name: "sobakintech",
+        id: 745203026335236178n
     },
 } satisfies Record<string, Dev>);
 
@@ -1383,14 +1368,6 @@ export const VencordDevsById = /* #__PURE__*/ (() =>
 export const EquicordDevsById = /* #__PURE__*/ (() =>
     Object.freeze(Object.fromEntries(
         Object.entries(EquicordDevs)
-            .filter(d => d[1].id !== 0n)
-            .map(([_, v]) => [v.id, v] as const)
-    ))
-)() as Record<string, Dev>;
-
-export const TestcordDevsById = /* #__PURE__*/ (() =>
-    Object.freeze(Object.fromEntries(
-        Object.entries(TestcordDevs)
             .filter(d => d[1].id !== 0n)
             .map(([_, v]) => [v.id, v] as const)
     ))
