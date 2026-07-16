@@ -5,8 +5,8 @@
  */
 
 import { definePluginSettings } from "@api/Settings";
-import { UserAreaButton } from "@api/UserArea";
-import { Devs, TestcordDevs } from "@utils/constants";
+import { UserAreaButton, addUserAreaButton, removeUserAreaButton } from "@api/UserArea";
+import { TestcordDevs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { findByPropsLazy } from "@webpack";
 import { Menu, React } from "@webpack/common";
@@ -38,7 +38,9 @@ export const settings = definePluginSettings({
 });
 
 // --- Internal State ---
-const activeState = {
+type StateKey = "mute" | "deaf" | "video";
+
+const activeState: Record<StateKey, boolean> = {
     mute: false,
     deaf: false,
     video: false
@@ -65,21 +67,21 @@ let updating = false;
 async function triggerDiscordUpdate() {
     if (updating) return setTimeout(triggerDiscordUpdate, 125);
     updating = true;
-    
-    // Suppress bloop sounds
+
+    // Suppress sound notifications
     const state = NotificationSettingsStore.getState();
     const toDisable: string[] = [];
     if (!state.disabledSounds.includes("mute")) toDisable.push("mute");
     if (!state.disabledSounds.includes("unmute")) toDisable.push("unmute");
 
     state.disabledSounds.push(...toDisable);
-    
-    // Force Voice Update
+
+    // Force Voice Update via temporary toggle
     await new Promise(r => setTimeout(r, 50));
     await MediaEngineActions.toggleSelfMute();
     await new Promise(r => setTimeout(r, 100));
     await MediaEngineActions.toggleSelfMute();
-    
+
     state.disabledSounds = state.disabledSounds.filter((i: string) => !toDisable.includes(i));
     updating = false;
 }
@@ -87,20 +89,25 @@ async function triggerDiscordUpdate() {
 // --- Components ---
 
 function FakeDeafenIcon({ enabled }: { enabled: boolean }) {
+    const color = enabled ? "#fff" : "#888";
     return (
         <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
-            <rect x="6" y="8" width="20" height="4" rx="2" fill={enabled ? "#fff" : "#888"} />
-            <rect x="11" y="3" width="10" height="8" rx="3" fill={enabled ? "#fff" : "#888"} />
-            <circle cx="10" cy="21" r="4" stroke={enabled ? "#fff" : "#888"} strokeWidth="2" fill="none" />
-            <circle cx="22" cy="21" r="4" stroke={enabled ? "#fff" : "#888"} strokeWidth="2" fill="none" />
-            <path d="M14 21c1 1 3 1 4 0" stroke={enabled ? "#fff" : "#888"} strokeWidth="2" strokeLinecap="round" />
+            <rect x="6" y="8" width="20" height="4" rx="2" fill={color} />
+            <rect x="11" y="3" width="10" height="8" rx="3" fill={color} />
+            <circle cx="10" cy="21" r="4" stroke={color} strokeWidth="2" fill="none" />
+            <circle cx="22" cy="21" r="4" stroke={color} strokeWidth="2" fill="none" />
+            <path d="M14 21c1 1 3 1 4 0" stroke={color} strokeWidth="2" strokeLinecap="round" />
         </svg>
     );
 }
 
 function FakeActionsButton() {
     const [, forceUpdate] = React.useReducer(x => x + 1, 0);
-    const { buttonControlsMute, buttonControlsDeaf, buttonControlsVideo } = settings.use(["buttonControlsMute", "buttonControlsDeaf", "buttonControlsVideo"]);
+    const { buttonControlsMute, buttonControlsDeaf, buttonControlsVideo } = settings.use([
+        "buttonControlsMute",
+        "buttonControlsDeaf",
+        "buttonControlsVideo"
+    ]);
 
     React.useEffect(() => {
         const listener = () => forceUpdate();
@@ -108,32 +115,31 @@ function FakeActionsButton() {
         return () => void listeners.delete(listener);
     }, []);
 
-    const isAnyActive = 
-        (buttonControlsMute && activeState.mute) || 
-        (buttonControlsDeaf && activeState.deaf) || 
+    const isAnyActive =
+        (buttonControlsMute && activeState.mute) ||
+        (buttonControlsDeaf && activeState.deaf) ||
         (buttonControlsVideo && activeState.video);
 
     const handleToggle = () => {
-        const targets = [];
+        const targets: StateKey[] = [];
         if (buttonControlsMute) targets.push("mute");
         if (buttonControlsDeaf) targets.push("deaf");
         if (buttonControlsVideo) targets.push("video");
 
         if (targets.length === 0) return;
 
-        // @ts-ignore
         const allTargetsOn = targets.every(t => activeState[t] === true);
         const newState = !allTargetsOn;
 
-        // @ts-ignore
-        targets.forEach(t => activeState[t] = newState);
-        
+        targets.forEach(t => {
+            activeState[t] = newState;
+        });
+
         emitChange();
     };
 
     return (
         <UserAreaButton
-            label="Fake Actions"
             tooltipText={isAnyActive ? "Disable Active Fake Actions" : "Enable Configured Fake Actions"}
             icon={<FakeDeafenIcon enabled={isAnyActive} />}
             onClick={handleToggle}
@@ -143,25 +149,26 @@ function FakeActionsButton() {
 
 // --- Plugin Definition ---
 
-const StateKeys = ["selfDeaf", "selfMute", "selfVideo"];
+const StateKeys = ["selfDeaf", "selfMute", "selfVideo"] as const;
+type VoiceStateProps = Record<typeof StateKeys[number], boolean>;
 
 export default definePlugin({
     name: "FakeMuteDeafenCamera",
     description: "Fake mute, deafen & Camera. Configure button behavior in Settings. Contributed by Chaython.",
-    authors: [TestcordDevs.x2b],
+    authors: [{ name: "Chaython", id: 1415804298771824740n }],
     settings,
-    
-    modifyVoiceState(e: any) {
+
+    modifyVoiceState(e: VoiceStateProps) {
         for (const stateKey of StateKeys) {
-            // @ts-ignore
+            // Map selfDeaf -> selfDeaf, etc.
             e[stateKey] = fakeVoiceState[stateKey] || e[stateKey];
         }
         return e;
     },
 
     contextMenus: {
-        "audio-device-context"(children, d) {
-            if (d.renderInputDevices) {
+        "audio-device-context"(children, d: any) {
+            if (d?.renderInputDevices) {
                 children.push(
                     <Menu.MenuSeparator />,
                     <Menu.MenuCheckboxItem
@@ -173,7 +180,7 @@ export default definePlugin({
                 );
             }
 
-            if (d.renderOutputDevices) {
+            if (d?.renderOutputDevices) {
                 children.push(
                     <Menu.MenuSeparator />,
                     <Menu.MenuCheckboxItem
@@ -199,11 +206,11 @@ export default definePlugin({
     },
 
     start() {
-        Vencord.Api.UserArea.addUserAreaButton("fake-deafen-btn", () => <FakeActionsButton />);
+        addUserAreaButton("fake-deafen-btn", () => <FakeActionsButton />);
     },
 
     stop() {
-        Vencord.Api.UserArea.removeUserAreaButton("fake-deafen-btn");
+        removeUserAreaButton("fake-deafen-btn");
     },
 
     patches: [
