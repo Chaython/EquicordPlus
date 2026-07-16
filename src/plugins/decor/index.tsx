@@ -17,7 +17,7 @@ import { useCurrentUserDecorationsStore } from "./lib/stores/CurrentUserDecorati
 import { useUserDecorAvatarDecoration, useUsersDecorationsStore } from "./lib/stores/UsersDecorationsStore";
 import { settings } from "./settings";
 import { setAvatarDecorationModalPreview, setDecorationGridDecoration, setDecorationGridItem } from "./ui/components";
-import DecorSection from "./ui/components/DecorSection";
+import DecorSection, { DecorSectionProps } from "./ui/components/DecorSection";
 
 export interface AvatarDecoration {
     asset: string;
@@ -88,7 +88,7 @@ export default definePlugin({
         },
         // Current user area, at bottom of channels/dm list
         {
-            find: ".DISPLAY_NAME_STYLES_COACHMARK)",
+            find: "#{intl::USER_PROFILE_ACCOUNT_POPOUT_BUTTON_A11Y_LABEL}",
             replacement: [
                 // Use Decor avatar decoration hook
                 {
@@ -115,6 +115,16 @@ export default definePlugin({
                 {
                     match: /(?<==)function\(\i\){let{user:\i,guildId:\i,avatarDecoration:/,
                     replace: "$self.AvatarDecorationModalPreview=$&"
+                }
+            ]
+        },
+        // 2026-03-wysiwyg-user-profile-editing
+        {
+            find: '("UserProfileModalV2EditingPanel")',
+            replacement: [
+                {
+                    match: /"inline"===.{0,100}#{intl::Zenogr::raw}\)/,
+                    replace: "$self.ExperimentDecorSection(),$&"
                 }
             ]
         }
@@ -166,5 +176,9 @@ export default definePlugin({
         }
     },
 
-    DecorSection: ErrorBoundary.wrap(DecorSection, { noop: true })
+    DecorSection: ErrorBoundary.wrap(DecorSection, { noop: true }),
+    ExperimentDecorSection: ErrorBoundary.wrap(
+        (props: DecorSectionProps) => <DecorSection {...props} useNewSection />,
+        { noop: true }
+    ),
 });

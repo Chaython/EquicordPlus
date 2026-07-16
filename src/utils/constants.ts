@@ -1383,6 +1383,18 @@ export const EquicordDevs = Object.freeze({
         name: "kat",
         id: 665120188047556609n
     },
+    Star123451: {
+        name: "Star123451",
+        id: 1037526188039618560n
+    },
+    auggeeo: {
+        name: "August (auggeeo)",
+        id: 594864203102158859n
+    },
+    bastih18: {
+        name: "bastih18",
+        id: 273797150880563201n
+    },
 } satisfies Record<string, Dev>);
 
 export const TestcordDevs = Object.freeze({
