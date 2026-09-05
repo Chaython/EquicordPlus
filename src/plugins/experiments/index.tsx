@@ -121,7 +121,7 @@ export default definePlugin({
         // dev://playground/mana, dev://playground/payments, dev://playground/virtual-currency,
         // dev://playground/nitro, dev://playground/mfa, dev://playground/cms, dev://playground/void
         {
-            find: "{PlaygroundEmbed:()=>",
+            find: ".useComponentPlaygroundConfigs)()",
             replacement: {
                 match: /"Revenue".{0,250}getCurrentUser\(\);return/,
                 replace: "$& true||"
@@ -131,7 +131,7 @@ export default definePlugin({
             // Expands the experiment regex to allow negative numbers as well as text in the last segment of the URL.
             find: '"^dev://experiment/',
             replacement: {
-                match: /(\[0-9\]\+)/,
+                match: /\[0-9\]\+(?=\)\)\?\$")/,
                 replace: "[a-zA-Z0-9-]+"
             }
         },
