@@ -10,41 +10,52 @@ const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
 const ZOOM_SENSITIVITY = 0.0015;
 
-// Mouse movement required before a click becomes a pan.
 const DRAG_THRESHOLD = 3;
-
-// How long Discord clicks are suppressed after completing a pan.
 const CLICK_SUPPRESSION_TIME = 500;
 
 interface SavedViewState {
     zoom: number;
 
     /*
-     * Pan stored as -1..1 rather than raw pixels.
-     * This means switching between a small call tile and fullscreen
-     * retains roughly the same viewed portion of the camera.
+     * Pan is stored as a normalized -1..1 value instead of raw pixels.
+     *
+     * This lets the same viewed area survive when Discord changes the
+     * camera from a small tile to a large/focused/fullscreen tile.
      */
     panX: number;
     panY: number;
 }
 
+interface StyleSnapshot {
+    value: string;
+    priority: string;
+}
+
 interface ViewState {
     key: string;
+
+    video: HTMLVideoElement;
+    tile: HTMLElement;
 
     zoom: number;
     x: number;
     y: number;
 
-    tile: HTMLElement;
     mirroredX: boolean;
 
-    originalTranslate: string;
-    originalScale: string;
-    originalTransformOrigin: string;
-    originalWillChange: string;
+    originalTranslate: StyleSnapshot;
+    originalScale: StyleSnapshot;
+    originalTransformOrigin: StyleSnapshot;
+    originalWillChange: StyleSnapshot;
 
-    originalTileOverflow: string;
-    originalTileCursor: string;
+    originalObjectFit: StyleSnapshot;
+    originalObjectPosition: StyleSnapshot;
+    originalWidth: StyleSnapshot;
+    originalHeight: StyleSnapshot;
+
+    originalTileOverflow: StyleSnapshot;
+    originalTileCursor: StyleSnapshot;
+    originalTileBackground: StyleSnapshot;
 }
 
 interface DragState {
@@ -61,33 +72,134 @@ interface DragState {
 }
 
 const states = new WeakMap<HTMLVideoElement, ViewState>();
+
 const activeVideos = new Set<HTMLVideoElement>();
 
 /*
- * Unlike `states`, this survives Discord replacing the <video> element
- * when switching between grid view and fullscreen.
+ * State stored by camera/stream rather than by <video> element.
+ *
+ * Discord can destroy and recreate the actual video element when changing
+ * layouts. Keeping the state here lets zoom/pan survive those transitions.
  */
 const savedStates = new Map<string, SavedViewState>();
 
+/*
+ * Used to stop the click generated after dragging from causing Discord to
+ * open/close the focused camera.
+ */
 const suppressedClicks = new Map<string, number>();
 
+const anonymousVideoIds = new WeakMap<HTMLVideoElement, number>();
+
+let nextAnonymousVideoId = 1;
+
 let dragState: DragState | null = null;
+
 let observer: MutationObserver | null = null;
 let scanFrame: number | null = null;
 
-function clamp(value: number, min: number, max: number) {
-    return Math.min(max, Math.max(min, value));
+function clamp(
+    value: number,
+    min: number,
+    max: number
+) {
+    return Math.min(
+        max,
+        Math.max(min, value)
+    );
 }
 
-function getVideoTile(target: EventTarget | null): HTMLElement | null {
+function getStyleSnapshot(
+    element: HTMLElement,
+    property: string
+): StyleSnapshot {
+    return {
+        value:
+            element.style.getPropertyValue(
+                property
+            ),
+
+        priority:
+            element.style.getPropertyPriority(
+                property
+            )
+    };
+}
+
+function restoreStyle(
+    element: HTMLElement,
+    property: string,
+    snapshot: StyleSnapshot
+) {
+    if (!snapshot.value) {
+        element.style.removeProperty(
+            property
+        );
+
+        return;
+    }
+
+    element.style.setProperty(
+        property,
+        snapshot.value,
+        snapshot.priority
+    );
+}
+
+function getVideoTile(
+    target: EventTarget | null
+): HTMLElement | null {
     if (!(target instanceof Element))
         return null;
 
-    return target.closest<HTMLElement>("[data-selenium-video-tile]");
+    return target.closest<HTMLElement>(
+        "[data-selenium-video-tile]"
+    );
 }
 
-function getVideo(tile: HTMLElement): HTMLVideoElement | null {
-    return tile.querySelector<HTMLVideoElement>("video");
+function getVideo(
+    tile: HTMLElement
+): HTMLVideoElement | null {
+    /*
+     * Prefer the visible video if Discord happens to have more than one
+     * video element inside a tile.
+     */
+    const videos =
+        tile.querySelectorAll<HTMLVideoElement>(
+            "video"
+        );
+
+    for (const video of videos) {
+        const rect =
+            video.getBoundingClientRect();
+
+        if (
+            rect.width > 0 &&
+            rect.height > 0
+        ) {
+            return video;
+        }
+    }
+
+    return videos[0] ?? null;
+}
+
+function getAnonymousVideoId(
+    video: HTMLVideoElement
+) {
+    let id =
+        anonymousVideoIds.get(video);
+
+    if (id === undefined) {
+        id = nextAnonymousVideoId++;
+
+        anonymousVideoIds.set(
+            video,
+            id
+        );
+    }
+
+    return id;
 }
 
 function getVideoKey(
@@ -95,43 +207,65 @@ function getVideoKey(
     tile: HTMLElement
 ): string {
     /*
-     * MediaStream.id is the preferred identifier.
-     *
-     * When Discord recreates a <video> element to enter fullscreen,
-     * the same underlying MediaStream normally remains attached.
+     * Best case:
+     * Discord keeps the same MediaStream while changing layouts.
      */
-    const source = video.srcObject;
+    const source =
+        video.srcObject;
 
-    if (source instanceof MediaStream && source.id)
+    if (
+        source instanceof MediaStream &&
+        source.id
+    ) {
         return `stream:${source.id}`;
+    }
 
     /*
-     * Fallback for Discord implementations where srcObject isn't directly
-     * exposed on the element.
+     * Fallback to Discord's tile identifier.
      */
-    const tileId = tile.getAttribute("data-selenium-video-tile");
+    const tileId =
+        tile.getAttribute(
+            "data-selenium-video-tile"
+        );
 
     if (tileId)
         return `tile:${tileId}`;
 
+    /*
+     * Some Discord layouts may expose a normal src/currentSrc.
+     */
     if (video.currentSrc)
         return `src:${video.currentSrc}`;
 
     /*
-     * Last-resort fallback. This cannot survive replacing the element,
-     * but avoids breaking zoom entirely if Discord changes its media setup.
+     * Last-resort per-element identifier.
+     *
+     * This one cannot survive element replacement, but prevents the plugin
+     * from failing entirely if Discord changes the video implementation.
      */
-    return `video:${video.dataset.webcamZoomId ??= crypto.randomUUID()}`;
+    return `video:${getAnonymousVideoId(video)}`;
 }
 
-function isMirrored(video: HTMLVideoElement) {
+function isMirrored(
+    video: HTMLVideoElement
+) {
     try {
-        const transform = getComputedStyle(video).transform;
+        const transform =
+            getComputedStyle(
+                video
+            ).transform;
 
-        if (!transform || transform === "none")
+        if (
+            !transform ||
+            transform === "none"
+        ) {
             return false;
+        }
 
-        const matrix = new DOMMatrixReadOnly(transform);
+        const matrix =
+            new DOMMatrixReadOnly(
+                transform
+            );
 
         return matrix.a < 0;
     } catch {
@@ -139,15 +273,174 @@ function isMirrored(video: HTMLVideoElement) {
     }
 }
 
+/*
+ * Forces Discord cameras to preserve their actual transmitted aspect ratio.
+ *
+ * Example:
+ *
+ * A 9:16 phone camera displayed on a 16:9 screen remains 9:16.
+ *
+ * Discord gets empty space on the left/right instead of cropping the
+ * sender's top and bottom.
+ */
+function applyAspectRatioFit(
+    video: HTMLVideoElement,
+    tile: HTMLElement
+) {
+    video.style.setProperty(
+        "width",
+        "100%",
+        "important"
+    );
+
+    video.style.setProperty(
+        "height",
+        "100%",
+        "important"
+    );
+
+    video.style.setProperty(
+        "object-fit",
+        "contain",
+        "important"
+    );
+
+    video.style.setProperty(
+        "object-position",
+        "center center",
+        "important"
+    );
+
+    tile.style.setProperty(
+        "background-color",
+        "#000",
+        "important"
+    );
+
+    tile.style.setProperty(
+        "overflow",
+        "hidden",
+        "important"
+    );
+}
+
+/*
+ * Calculates the size of the actual visible video when object-fit: contain
+ * is being used.
+ *
+ * The video may be much narrower than the Discord tile for portrait feeds.
+ */
+function getContainedVideoSize(
+    video: HTMLVideoElement,
+    tile: HTMLElement
+) {
+    const rect =
+        tile.getBoundingClientRect();
+
+    const containerWidth =
+        rect.width;
+
+    const containerHeight =
+        rect.height;
+
+    if (
+        containerWidth <= 0 ||
+        containerHeight <= 0
+    ) {
+        return {
+            width: 0,
+            height: 0
+        };
+    }
+
+    if (
+        !video.videoWidth ||
+        !video.videoHeight
+    ) {
+        return {
+            width: containerWidth,
+            height: containerHeight
+        };
+    }
+
+    const videoAspect =
+        video.videoWidth /
+        video.videoHeight;
+
+    const containerAspect =
+        containerWidth /
+        containerHeight;
+
+    if (
+        videoAspect >
+        containerAspect
+    ) {
+        /*
+         * Video is wider relative to the container.
+         *
+         * Width touches the container edges.
+         */
+        return {
+            width:
+                containerWidth,
+
+            height:
+                containerWidth /
+                videoAspect
+        };
+    }
+
+    /*
+     * Video is taller relative to the container.
+     *
+     * Height touches the container edges.
+     */
+    return {
+        width:
+            containerHeight *
+            videoAspect,
+
+        height:
+            containerHeight
+    };
+}
+
+/*
+ * Determines how far the zoomed video can actually be panned before empty
+ * space would be exposed.
+ */
 function getPanLimits(
+    video: HTMLVideoElement,
     tile: HTMLElement,
     zoom: number
 ) {
-    const rect = tile.getBoundingClientRect();
+    const rect =
+        tile.getBoundingClientRect();
+
+    const contained =
+        getContainedVideoSize(
+            video,
+            tile
+        );
 
     return {
-        x: Math.max(0, rect.width * (zoom - 1) / 2),
-        y: Math.max(0, rect.height * (zoom - 1) / 2)
+        x: Math.max(
+            0,
+            (
+                contained.width *
+                zoom -
+                rect.width
+            ) / 2
+        ),
+
+        y: Math.max(
+            0,
+            (
+                contained.height *
+                zoom -
+                rect.height
+            ) / 2
+        )
     };
 }
 
@@ -156,37 +449,136 @@ function createState(
     tile: HTMLElement,
     key: string
 ): ViewState {
-    const saved = savedStates.get(key);
+    /*
+     * Save all Discord styles BEFORE modifying anything.
+     */
+    const originalTranslate =
+        getStyleSnapshot(
+            video,
+            "translate"
+        );
 
-    const zoom = saved?.zoom ?? 1;
-    const limits = getPanLimits(tile, zoom);
+    const originalScale =
+        getStyleSnapshot(
+            video,
+            "scale"
+        );
+
+    const originalTransformOrigin =
+        getStyleSnapshot(
+            video,
+            "transform-origin"
+        );
+
+    const originalWillChange =
+        getStyleSnapshot(
+            video,
+            "will-change"
+        );
+
+    const originalObjectFit =
+        getStyleSnapshot(
+            video,
+            "object-fit"
+        );
+
+    const originalObjectPosition =
+        getStyleSnapshot(
+            video,
+            "object-position"
+        );
+
+    const originalWidth =
+        getStyleSnapshot(
+            video,
+            "width"
+        );
+
+    const originalHeight =
+        getStyleSnapshot(
+            video,
+            "height"
+        );
+
+    const originalTileOverflow =
+        getStyleSnapshot(
+            tile,
+            "overflow"
+        );
+
+    const originalTileCursor =
+        getStyleSnapshot(
+            tile,
+            "cursor"
+        );
+
+    const originalTileBackground =
+        getStyleSnapshot(
+            tile,
+            "background-color"
+        );
+
+    applyAspectRatioFit(
+        video,
+        tile
+    );
+
+    const saved =
+        savedStates.get(key);
+
+    const zoom =
+        saved?.zoom ??
+        MIN_ZOOM;
+
+    const limits =
+        getPanLimits(
+            video,
+            tile,
+            zoom
+        );
 
     const state: ViewState = {
         key,
 
+        video,
+        tile,
+
         zoom,
 
-        /*
-         * Convert normalized pan back into pixels for the current tile size.
-         * This is what allows a pan position to survive going fullscreen.
-         */
-        x: (saved?.panX ?? 0) * limits.x,
-        y: (saved?.panY ?? 0) * limits.y,
+        x:
+            (saved?.panX ?? 0) *
+            limits.x,
 
-        tile,
-        mirroredX: isMirrored(video),
+        y:
+            (saved?.panY ?? 0) *
+            limits.y,
 
-        originalTranslate: video.style.translate,
-        originalScale: video.style.scale,
-        originalTransformOrigin: video.style.transformOrigin,
-        originalWillChange: video.style.willChange,
+        mirroredX:
+            isMirrored(video),
 
-        originalTileOverflow: tile.style.overflow,
-        originalTileCursor: tile.style.cursor
+        originalTranslate,
+        originalScale,
+        originalTransformOrigin,
+        originalWillChange,
+
+        originalObjectFit,
+        originalObjectPosition,
+        originalWidth,
+        originalHeight,
+
+        originalTileOverflow,
+        originalTileCursor,
+        originalTileBackground
     };
 
-    states.set(video, state);
-    activeVideos.add(video);
+    states.set(
+        video,
+        state
+    );
+
+    activeVideos.add(
+        video
+    );
 
     return state;
 }
@@ -195,51 +587,95 @@ function restoreElement(
     video: HTMLVideoElement,
     state: ViewState
 ) {
-    video.style.translate = state.originalTranslate;
-    video.style.scale = state.originalScale;
-    video.style.transformOrigin = state.originalTransformOrigin;
-    video.style.willChange = state.originalWillChange;
+    restoreStyle(
+        video,
+        "translate",
+        state.originalTranslate
+    );
 
-    state.tile.style.overflow = state.originalTileOverflow;
-    state.tile.style.cursor = state.originalTileCursor;
+    restoreStyle(
+        video,
+        "scale",
+        state.originalScale
+    );
+
+    restoreStyle(
+        video,
+        "transform-origin",
+        state.originalTransformOrigin
+    );
+
+    restoreStyle(
+        video,
+        "will-change",
+        state.originalWillChange
+    );
+
+    restoreStyle(
+        video,
+        "object-fit",
+        state.originalObjectFit
+    );
+
+    restoreStyle(
+        video,
+        "object-position",
+        state.originalObjectPosition
+    );
+
+    restoreStyle(
+        video,
+        "width",
+        state.originalWidth
+    );
+
+    restoreStyle(
+        video,
+        "height",
+        state.originalHeight
+    );
+
+    restoreStyle(
+        state.tile,
+        "overflow",
+        state.originalTileOverflow
+    );
+
+    restoreStyle(
+        state.tile,
+        "cursor",
+        state.originalTileCursor
+    );
+
+    restoreStyle(
+        state.tile,
+        "background-color",
+        state.originalTileBackground
+    );
 
     states.delete(video);
-    activeVideos.delete(video);
 
-    if (dragState?.video === video)
-        dragState = null;
-}
-
-function getState(
-    video: HTMLVideoElement,
-    tile: HTMLElement
-) {
-    const key = getVideoKey(video, tile);
-    const current = states.get(video);
-
-    /*
-     * Same video but Discord moved it into a new tile/fullscreen container.
-     * Restore the old container and reattach using the persistent state.
-     */
-    if (
-        current &&
-        (
-            current.tile !== tile ||
-            current.key !== key
-        )
-    ) {
-        saveState(current);
-        restoreElement(video, current);
-    }
-
-    return states.get(video) ?? createState(video, tile, key);
-}
-
-function clampPan(state: ViewState) {
-    const limits = getPanLimits(
-        state.tile,
-        state.zoom
+    activeVideos.delete(
+        video
     );
+
+    if (
+        dragState?.video ===
+        video
+    ) {
+        dragState = null;
+    }
+}
+
+function clampPan(
+    state: ViewState
+) {
+    const limits =
+        getPanLimits(
+            state.video,
+            state.tile,
+            state.zoom
+        );
 
     state.x = clamp(
         state.x,
@@ -254,43 +690,73 @@ function clampPan(state: ViewState) {
     );
 }
 
-function saveState(state: ViewState) {
-    if (state.zoom <= MIN_ZOOM) {
-        savedStates.delete(state.key);
+function saveState(
+    state: ViewState
+) {
+    if (
+        state.zoom <=
+        MIN_ZOOM + 0.001
+    ) {
+        savedStates.delete(
+            state.key
+        );
+
         return;
     }
 
-    const limits = getPanLimits(
-        state.tile,
-        state.zoom
+    const limits =
+        getPanLimits(
+            state.video,
+            state.tile,
+            state.zoom
+        );
+
+    savedStates.set(
+        state.key,
+        {
+            zoom:
+                state.zoom,
+
+            panX:
+                limits.x > 0
+                    ? clamp(
+                        state.x /
+                        limits.x,
+                        -1,
+                        1
+                    )
+                    : 0,
+
+            panY:
+                limits.y > 0
+                    ? clamp(
+                        state.y /
+                        limits.y,
+                        -1,
+                        1
+                    )
+                    : 0
+        }
     );
-
-    savedStates.set(state.key, {
-        zoom: state.zoom,
-
-        panX:
-            limits.x > 0
-                ? clamp(state.x / limits.x, -1, 1)
-                : 0,
-
-        panY:
-            limits.y > 0
-                ? clamp(state.y / limits.y, -1, 1)
-                : 0
-    });
 }
 
 function apply(
     video: HTMLVideoElement,
     state: ViewState
 ) {
+    applyAspectRatioFit(
+        video,
+        state.tile
+    );
+
     clampPan(state);
 
     /*
-     * Recheck because Discord can change mirroring when its video layout
-     * changes.
+     * Re-evaluate mirroring because Discord can change the camera styling
+     * when moving it between layouts.
      */
-    state.mirroredX = isMirrored(video);
+    state.mirroredX =
+        isMirrored(video);
 
     const translateX =
         state.mirroredX
@@ -298,53 +764,135 @@ function apply(
             : state.x;
 
     /*
-     * Don't replace `transform`.
+     * Individual CSS transform properties are intentional.
      *
-     * Discord itself may use transform for webcam mirroring.
+     * We do not overwrite Discord's transform property because Discord may
+     * already use transform to mirror a local webcam.
      */
-    video.style.translate =
-        `${translateX}px ${state.y}px`;
+    video.style.setProperty(
+        "translate",
+        `${translateX}px ${state.y}px`,
+        "important"
+    );
 
-    video.style.scale =
-        String(state.zoom);
+    video.style.setProperty(
+        "scale",
+        String(state.zoom),
+        "important"
+    );
 
-    video.style.transformOrigin =
-        "center center";
+    video.style.setProperty(
+        "transform-origin",
+        "center center",
+        "important"
+    );
 
-    video.style.willChange =
-        "translate, scale";
+    video.style.setProperty(
+        "will-change",
+        "translate, scale",
+        "important"
+    );
 
-    state.tile.style.overflow =
-        "hidden";
-
-    state.tile.style.cursor =
+    state.tile.style.setProperty(
+        "cursor",
         state.zoom > 1
             ? dragState?.video === video
                 ? "grabbing"
                 : "grab"
-            : state.originalTileCursor;
+            : state.originalTileCursor.value,
+        "important"
+    );
 
     saveState(state);
 }
 
-function resetKey(key: string) {
+function getState(
+    video: HTMLVideoElement,
+    tile: HTMLElement
+) {
+    const key =
+        getVideoKey(
+            video,
+            tile
+        );
+
+    const current =
+        states.get(video);
+
+    /*
+     * Discord reused the video but moved it into another tile/container.
+     */
+    if (
+        current &&
+        (
+            current.tile !== tile ||
+            current.key !== key
+        )
+    ) {
+        saveState(current);
+
+        restoreElement(
+            video,
+            current
+        );
+    }
+
+    return (
+        states.get(video) ??
+        createState(
+            video,
+            tile,
+            key
+        )
+    );
+}
+
+function resetKey(
+    key: string
+) {
     savedStates.delete(key);
 
-    for (const video of [...activeVideos]) {
-        const state = states.get(video);
+    for (
+        const video of
+        [...activeVideos]
+    ) {
+        const state =
+            states.get(video);
 
-        if (!state || state.key !== key)
+        if (
+            !state ||
+            state.key !== key
+        ) {
             continue;
+        }
 
-        restoreElement(video, state);
+        /*
+         * Reset zoom/pan but keep aspect-ratio correction active.
+         */
+        state.zoom =
+            MIN_ZOOM;
+
+        state.x = 0;
+        state.y = 0;
+
+        apply(
+            video,
+            state
+        );
     }
 }
 
-function reset(video: HTMLVideoElement) {
-    const state = states.get(video);
+function resetVideo(
+    video: HTMLVideoElement
+) {
+    const existing =
+        states.get(video);
 
-    if (state) {
-        resetKey(state.key);
+    if (existing) {
+        resetKey(
+            existing.key
+        );
+
         return;
     }
 
@@ -356,16 +904,19 @@ function reset(video: HTMLVideoElement) {
     if (!tile)
         return;
 
-    resetKey(getVideoKey(video, tile));
+    resetKey(
+        getVideoKey(
+            video,
+            tile
+        )
+    );
 }
 
 /*
- * Called when Discord inserts/recreates a video tile.
- *
- * This is what makes the zoom immediately reappear when entering or
- * leaving fullscreen without requiring another wheel event first.
+ * Attaches our aspect correction and restores saved zoom/pan after Discord
+ * creates or moves a webcam video.
  */
-function restoreSavedVideo(
+function restoreVideo(
     video: HTMLVideoElement
 ) {
     const tile =
@@ -376,32 +927,74 @@ function restoreSavedVideo(
     if (!tile)
         return;
 
-    const key = getVideoKey(video, tile);
-    const saved = savedStates.get(key);
+    const key =
+        getVideoKey(
+            video,
+            tile
+        );
 
-    if (!saved || saved.zoom <= MIN_ZOOM)
-        return;
-
-    const current = states.get(video);
+    const current =
+        states.get(video);
 
     if (
         current &&
-        current.key === key &&
-        current.tile === tile
+        current.tile === tile &&
+        current.key === key
     ) {
+        /*
+         * Discord may have rewritten its styles, so reassert ours.
+         */
+        applyAspectRatioFit(
+            video,
+            tile
+        );
+
+        if (
+            current.zoom >
+            MIN_ZOOM
+        ) {
+            apply(
+                video,
+                current
+            );
+        }
+
         return;
     }
 
-    if (current)
-        restoreElement(video, current);
+    if (current) {
+        saveState(current);
 
-    const state = createState(
+        restoreElement(
+            video,
+            current
+        );
+    }
+
+    const state =
+        createState(
+            video,
+            tile,
+            key
+        );
+
+    /*
+     * Even at 1x, keep object-fit: contain so Discord never crops the feed.
+     */
+    applyAspectRatioFit(
         video,
-        tile,
-        key
+        tile
     );
 
-    apply(video, state);
+    if (
+        state.zoom >
+        MIN_ZOOM
+    ) {
+        apply(
+            video,
+            state
+        );
+    }
 }
 
 function scanVideos() {
@@ -411,20 +1004,43 @@ function scanVideos() {
         .querySelectorAll<HTMLVideoElement>(
             "[data-selenium-video-tile] video"
         )
-        .forEach(restoreSavedVideo);
+        .forEach(
+            restoreVideo
+        );
 }
 
 function scheduleVideoScan() {
-    if (scanFrame !== null)
+    if (
+        scanFrame !== null
+    ) {
         return;
+    }
 
     scanFrame =
-        requestAnimationFrame(scanVideos);
+        requestAnimationFrame(
+            scanVideos
+        );
 }
 
-function onWheel(event: WheelEvent) {
+function onLoadedMetadata(
+    event: Event
+) {
+    if (
+        !(event.target instanceof HTMLVideoElement)
+    ) {
+        return;
+    }
+
+    restoreVideo(
+        event.target
+    );
+}
+
+function onWheel(
+    event: WheelEvent
+) {
     /*
-     * Allow Discord's built-in stream zoom to take priority.
+     * Give Discord-native handlers priority if they already consumed it.
      */
     if (
         event.defaultPrevented ||
@@ -434,29 +1050,27 @@ function onWheel(event: WheelEvent) {
     }
 
     const tile =
-        getVideoTile(event.target);
+        getVideoTile(
+            event.target
+        );
 
     if (!tile)
         return;
 
-    const video = getVideo(tile);
+    const video =
+        getVideo(tile);
 
     if (!video)
         return;
 
-    const key =
-        getVideoKey(video, tile);
-
-    const existing =
-        states.get(video);
-
-    const saved =
-        savedStates.get(key);
+    const state =
+        getState(
+            video,
+            tile
+        );
 
     const oldZoom =
-        existing?.zoom ??
-        saved?.zoom ??
-        MIN_ZOOM;
+        state.zoom;
 
     const multiplier =
         Math.exp(
@@ -466,25 +1080,26 @@ function onWheel(event: WheelEvent) {
 
     const newZoom =
         clamp(
-            oldZoom * multiplier,
+            oldZoom *
+            multiplier,
+
             MIN_ZOOM,
             MAX_ZOOM
         );
 
     /*
-     * At 1x, scrolling outward shouldn't trap the user's normal wheel.
+     * At minimum zoom, scrolling outward should continue behaving normally.
      */
     if (
-        oldZoom === MIN_ZOOM &&
-        newZoom === MIN_ZOOM
+        oldZoom <=
+            MIN_ZOOM + 0.001 &&
+        newZoom <=
+            MIN_ZOOM + 0.001
     ) {
         return;
     }
 
     event.preventDefault();
-
-    const state =
-        getState(video, tile);
 
     const previousZoom =
         state.zoom;
@@ -507,10 +1122,11 @@ function onWheel(event: WheelEvent) {
         );
 
     const ratio =
-        newZoom / previousZoom;
+        newZoom /
+        previousZoom;
 
     /*
-     * Zoom toward the mouse cursor.
+     * Zoom toward the cursor.
      */
     state.x =
         pointerX -
@@ -526,20 +1142,33 @@ function onWheel(event: WheelEvent) {
             state.y
         ) * ratio;
 
-    state.zoom = newZoom;
+    state.zoom =
+        newZoom;
 
     if (
         state.zoom <=
         MIN_ZOOM + 0.001
     ) {
-        resetKey(state.key);
-        return;
+        state.zoom =
+            MIN_ZOOM;
+
+        state.x = 0;
+        state.y = 0;
+
+        savedStates.delete(
+            state.key
+        );
     }
 
-    apply(video, state);
+    apply(
+        video,
+        state
+    );
 }
 
-function onMouseDown(event: MouseEvent) {
+function onMouseDown(
+    event: MouseEvent
+) {
     if (
         event.defaultPrevented ||
         event.button !== 0
@@ -548,67 +1177,80 @@ function onMouseDown(event: MouseEvent) {
     }
 
     const tile =
-        getVideoTile(event.target);
+        getVideoTile(
+            event.target
+        );
 
     if (!tile)
         return;
 
-    const video = getVideo(tile);
+    const video =
+        getVideo(tile);
 
     if (!video)
         return;
 
     const state =
-        states.get(video);
+        getState(
+            video,
+            tile
+        );
 
-    const key =
-        getVideoKey(video, tile);
-
-    const saved =
-        savedStates.get(key);
-
-    const zoom =
-        state?.zoom ??
-        saved?.zoom ??
-        1;
-
-    if (zoom <= 1)
+    if (
+        state.zoom <=
+        MIN_ZOOM
+    ) {
         return;
-
-    const attachedState =
-        getState(video, tile);
+    }
 
     dragState = {
         video,
-        key: attachedState.key,
+        key:
+            state.key,
 
-        startX: event.clientX,
-        startY: event.clientY,
+        startX:
+            event.clientX,
 
-        lastX: event.clientX,
-        lastY: event.clientY,
+        startY:
+            event.clientY,
 
-        moved: false
+        lastX:
+            event.clientX,
+
+        lastY:
+            event.clientY,
+
+        moved:
+            false
     };
 
     /*
-     * Prevent image/text dragging while still allowing a normal click to
-     * become fullscreen if the mouse never actually moves.
+     * Prevent browser-native video/image dragging.
+     *
+     * A click is still allowed unless the pointer actually moves enough to
+     * cross DRAG_THRESHOLD.
      */
     event.preventDefault();
 
-    apply(video, attachedState);
+    apply(
+        video,
+        state
+    );
 }
 
-function onMouseMove(event: MouseEvent) {
+function onMouseMove(
+    event: MouseEvent
+) {
     if (!dragState)
         return;
 
-    const { video } =
+    const currentDrag =
         dragState;
 
     const state =
-        states.get(video);
+        states.get(
+            currentDrag.video
+        );
 
     if (!state) {
         dragState = null;
@@ -617,49 +1259,61 @@ function onMouseMove(event: MouseEvent) {
 
     const totalX =
         event.clientX -
-        dragState.startX;
+        currentDrag.startX;
 
     const totalY =
         event.clientY -
-        dragState.startY;
+        currentDrag.startY;
 
     if (
-        !dragState.moved &&
-        Math.hypot(totalX, totalY) >=
-        DRAG_THRESHOLD
+        !currentDrag.moved &&
+        Math.hypot(
+            totalX,
+            totalY
+        ) >=
+            DRAG_THRESHOLD
     ) {
-        dragState.moved = true;
+        currentDrag.moved =
+            true;
     }
 
     /*
-     * Don't start changing the pan until this is definitely a drag.
+     * Do not alter pan until the movement is definitely a drag.
      */
-    if (!dragState.moved)
+    if (!currentDrag.moved)
         return;
 
     event.preventDefault();
 
     const deltaX =
         event.clientX -
-        dragState.lastX;
+        currentDrag.lastX;
 
     const deltaY =
         event.clientY -
-        dragState.lastY;
+        currentDrag.lastY;
 
-    dragState.lastX =
+    currentDrag.lastX =
         event.clientX;
 
-    dragState.lastY =
+    currentDrag.lastY =
         event.clientY;
 
-    state.x += deltaX;
-    state.y += deltaY;
+    state.x +=
+        deltaX;
 
-    apply(video, state);
+    state.y +=
+        deltaY;
+
+    apply(
+        currentDrag.video,
+        state
+    );
 }
 
-function onMouseUp(event: MouseEvent) {
+function onMouseUp(
+    event: MouseEvent
+) {
     if (
         event.button !== 0 ||
         !dragState
@@ -677,16 +1331,20 @@ function onMouseUp(event: MouseEvent) {
 
     dragState = null;
 
-    if (currentDrag.moved) {
+    if (
+        currentDrag.moved
+    ) {
         /*
-         * A browser normally emits `click` after mousedown -> drag -> mouseup.
-         * Discord sees that click and opens the camera fullscreen.
+         * Browsers normally emit a click after:
          *
-         * Remember this camera temporarily so the capture-phase click handler
-         * can discard that synthetic post-drag click.
+         * mousedown -> drag -> mouseup -> click
+         *
+         * Discord would interpret that click as "focus/fullscreen camera".
+         * Suppress it only when an actual pan occurred.
          */
         suppressedClicks.set(
             currentDrag.key,
+
             Date.now() +
             CLICK_SUPPRESSION_TIME
         );
@@ -694,47 +1352,69 @@ function onMouseUp(event: MouseEvent) {
         event.preventDefault();
     }
 
-    if (state)
+    if (state) {
         apply(
             currentDrag.video,
             state
         );
+    }
 }
 
 function shouldSuppressClick(
     event: MouseEvent
 ) {
     const tile =
-        getVideoTile(event.target);
+        getVideoTile(
+            event.target
+        );
 
     if (!tile)
         return false;
 
-    const video = getVideo(tile);
+    const video =
+        getVideo(tile);
 
     if (!video)
         return false;
 
     const key =
-        getVideoKey(video, tile);
+        getVideoKey(
+            video,
+            tile
+        );
 
     const until =
-        suppressedClicks.get(key);
+        suppressedClicks.get(
+            key
+        );
 
     if (!until)
         return false;
 
-    if (Date.now() > until) {
-        suppressedClicks.delete(key);
+    if (
+        Date.now() >
+        until
+    ) {
+        suppressedClicks.delete(
+            key
+        );
+
         return false;
     }
 
     return true;
 }
 
-function onClickCapture(event: MouseEvent) {
-    if (!shouldSuppressClick(event))
+function onClickCapture(
+    event: MouseEvent
+) {
+    if (
+        !shouldSuppressClick(
+            event
+        )
+    ) {
         return;
+    }
 
     event.preventDefault();
     event.stopPropagation();
@@ -744,40 +1424,74 @@ function onClickCapture(event: MouseEvent) {
 function onDoubleClickCapture(
     event: MouseEvent
 ) {
-    if (!shouldSuppressClick(event))
+    if (
+        !shouldSuppressClick(
+            event
+        )
+    ) {
         return;
+    }
 
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
 }
 
-/*
- * Middle-click still performs an immediate reset.
- */
-function onAuxClick(event: MouseEvent) {
-    if (event.button !== 1)
+function onAuxClick(
+    event: MouseEvent
+) {
+    /*
+     * Middle-click resets zoom and pan.
+     */
+    if (
+        event.button !== 1
+    ) {
         return;
+    }
 
     const tile =
-        getVideoTile(event.target);
+        getVideoTile(
+            event.target
+        );
 
     if (!tile)
         return;
 
-    const video = getVideo(tile);
+    const video =
+        getVideo(tile);
 
     if (!video)
         return;
 
-    const key =
-        getVideoKey(video, tile);
+    const state =
+        states.get(video);
 
-    if (!savedStates.has(key))
+    const key =
+        state?.key ??
+        getVideoKey(
+            video,
+            tile
+        );
+
+    const saved =
+        savedStates.get(key);
+
+    if (
+        !saved &&
+        (
+            !state ||
+            state.zoom <=
+                MIN_ZOOM
+        )
+    ) {
         return;
+    }
 
     event.preventDefault();
-    resetKey(key);
+
+    resetVideo(
+        video
+    );
 }
 
 function onWindowBlur() {
@@ -794,23 +1508,26 @@ function onWindowBlur() {
 
     dragState = null;
 
-    if (state)
+    if (state) {
         apply(
             currentDrag.video,
             state
         );
+    }
 }
 
 export default definePlugin({
     name: "WebcamZoom",
 
     description:
-        "Adds mouse-wheel zooming and click-drag panning to users' webcam video tiles.",
+        "Adds aspect-correct webcam viewing, mouse-wheel zooming and click-drag panning.",
 
     authors: [
         {
             name: "Chay",
-            // Replace with your Discord ID if desired.
+            /*
+             * Replace this with your Discord user ID if desired.
+             */
             id: 0n
         }
     ],
@@ -821,6 +1538,9 @@ export default definePlugin({
     ],
 
     start() {
+        /*
+         * Wheel zoom.
+         */
         document.addEventListener(
             "wheel",
             onWheel,
@@ -829,6 +1549,9 @@ export default definePlugin({
             }
         );
 
+        /*
+         * Drag panning.
+         */
         document.addEventListener(
             "mousedown",
             onMouseDown
@@ -845,9 +1568,8 @@ export default definePlugin({
         );
 
         /*
-         * Capture is intentional.
-         *
-         * Discord/React must not receive the click generated after panning.
+         * Capture-phase handlers prevent the click generated after a pan
+         * from making the camera focused/fullscreen.
          */
         document.addEventListener(
             "click",
@@ -861,9 +1583,22 @@ export default definePlugin({
             true
         );
 
+        /*
+         * Middle-click reset.
+         */
         document.addEventListener(
             "auxclick",
             onAuxClick
+        );
+
+        /*
+         * When video metadata becomes available we can calculate its real
+         * transmitted aspect ratio and pan bounds accurately.
+         */
+        document.addEventListener(
+            "loadedmetadata",
+            onLoadedMetadata,
+            true
         );
 
         window.addEventListener(
@@ -872,8 +1607,15 @@ export default definePlugin({
         );
 
         /*
-         * Watch for Discord recreating/reparenting the camera <video>
-         * during fullscreen transitions.
+         * Discord frequently destroys/recreates/reparents video elements
+         * when switching between:
+         *
+         * - normal call grid
+         * - focused camera
+         * - stage
+         * - fullscreen
+         *
+         * Rescan whenever that happens.
          */
         observer =
             new MutationObserver(
@@ -929,6 +1671,12 @@ export default definePlugin({
             onAuxClick
         );
 
+        document.removeEventListener(
+            "loadedmetadata",
+            onLoadedMetadata,
+            true
+        );
+
         window.removeEventListener(
             "blur",
             onWindowBlur
@@ -937,7 +1685,9 @@ export default definePlugin({
         observer?.disconnect();
         observer = null;
 
-        if (scanFrame !== null) {
+        if (
+            scanFrame !== null
+        ) {
             cancelAnimationFrame(
                 scanFrame
             );
@@ -946,8 +1696,14 @@ export default definePlugin({
         }
 
         dragState = null;
-        suppressedClicks.clear();
 
+        suppressedClicks.clear();
+        savedStates.clear();
+
+        /*
+         * Restore every Discord element exactly to its original inline
+         * styling when the plugin is disabled.
+         */
         for (
             const video of
             [...activeVideos]
@@ -955,13 +1711,12 @@ export default definePlugin({
             const state =
                 states.get(video);
 
-            if (state)
+            if (state) {
                 restoreElement(
                     video,
                     state
                 );
+            }
         }
-
-        savedStates.clear();
     }
 });
