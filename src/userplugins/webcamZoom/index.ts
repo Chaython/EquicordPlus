@@ -1,27 +1,23 @@
 /*
- * Vencord, a Discord client mod
- * Copyright (c) 2026 Vendicated and contributors
+ * Equicord, a Discord client mod
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import definePlugin from "@utils/types";
+import { definePluginSettings } from "@api/Settings";
+import definePlugin, { OptionType } from "@utils/types";
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
 const ZOOM_SENSITIVITY = 0.0015;
-
 const DRAG_THRESHOLD = 3;
 const CLICK_SUPPRESSION_TIME = 500;
 
+const FULLSCREEN_ATTRIBUTE = "data-webcam-zoom-fullscreen";
+const FULLSCREEN_VIDEO_ATTRIBUTE = "data-webcam-zoom-fullscreen-video";
+const FULLSCREEN_UI_ATTRIBUTE = "data-webcam-zoom-fullscreen-ui";
+
 interface SavedViewState {
     zoom: number;
-
-    /*
-     * Pan is stored as a normalized -1..1 value instead of raw pixels.
-     *
-     * This lets the same viewed area survive when Discord changes the
-     * camera from a small tile to a large/focused/fullscreen tile.
-     */
     panX: number;
     panY: number;
 }
@@ -33,70 +29,136 @@ interface StyleSnapshot {
 
 interface ViewState {
     key: string;
-
     video: HTMLVideoElement;
-    tile: HTMLElement;
+    container: HTMLElement;
 
     zoom: number;
     x: number;
     y: number;
-
     mirroredX: boolean;
 
     originalTranslate: StyleSnapshot;
     originalScale: StyleSnapshot;
     originalTransformOrigin: StyleSnapshot;
     originalWillChange: StyleSnapshot;
-
     originalObjectFit: StyleSnapshot;
     originalObjectPosition: StyleSnapshot;
     originalWidth: StyleSnapshot;
     originalHeight: StyleSnapshot;
-
-    originalTileOverflow: StyleSnapshot;
-    originalTileCursor: StyleSnapshot;
-    originalTileBackground: StyleSnapshot;
+    originalOverflow: StyleSnapshot;
+    originalCursor: StyleSnapshot;
+    originalBackground: StyleSnapshot;
 }
 
 interface DragState {
     video: HTMLVideoElement;
     key: string;
-
     startX: number;
     startY: number;
-
     lastX: number;
     lastY: number;
-
     moved: boolean;
 }
 
+interface VideoContext {
+    video: HTMLVideoElement;
+    container: HTMLElement;
+    fullscreen: boolean;
+}
+
+interface FullscreenSession {
+    overlay: HTMLDivElement;
+    video: HTMLVideoElement;
+    key: string;
+    requestedNativeFullscreen: boolean;
+}
+
 const states = new WeakMap<HTMLVideoElement, ViewState>();
-
 const activeVideos = new Set<HTMLVideoElement>();
-
-/*
- * State stored by camera/stream rather than by <video> element.
- *
- * Discord can destroy and recreate the actual video element when changing
- * layouts. Keeping the state here lets zoom/pan survive those transitions.
- */
 const savedStates = new Map<string, SavedViewState>();
-
-/*
- * Used to stop the click generated after dragging from causing Discord to
- * open/close the focused camera.
- */
 const suppressedClicks = new Map<string, number>();
-
 const anonymousVideoIds = new WeakMap<HTMLVideoElement, number>();
 
 let nextAnonymousVideoId = 1;
-
 let dragState: DragState | null = null;
-
+let fullscreenSession: FullscreenSession | null = null;
 let observer: MutationObserver | null = null;
 let scanFrame: number | null = null;
+
+export const settings = definePluginSettings({
+    wheelZoom: {
+        type: OptionType.BOOLEAN,
+        description: "Allow mouse-wheel zooming on webcams",
+        default: true
+    },
+
+    dragPan: {
+        type: OptionType.BOOLEAN,
+        description: "Allow click-and-drag panning while a webcam is zoomed",
+        default: true,
+
+        onChange() {
+            refreshActiveStates();
+        }
+    },
+
+    rememberView: {
+        type: OptionType.BOOLEAN,
+        description:
+            "Remember zoom and pan when Discord recreates a camera or when switching to/from fullscreen",
+        default: true,
+
+        onChange(value) {
+            if (!value)
+                savedStates.clear();
+        }
+    },
+
+    fitAspectRatio: {
+        type: OptionType.BOOLEAN,
+        description:
+            "At 1x, show webcams using their real aspect ratio instead of Discord cropping them",
+        default: true,
+
+        onChange() {
+            refreshActiveStates();
+            scheduleVideoScan();
+        }
+    },
+
+    customFullscreen: {
+        type: OptionType.BOOLEAN,
+        description:
+            "Double-click a webcam to open it in the custom fullscreen viewer",
+        default: true,
+
+        onChange(value) {
+            if (!value)
+                closeCustomFullscreen();
+        }
+    },
+
+    nativeFullscreen: {
+        type: OptionType.BOOLEAN,
+        description:
+            "Use real system fullscreen for the custom camera viewer when supported",
+        default: true
+    },
+
+    preventFullscreenWhilePanning: {
+        type: OptionType.BOOLEAN,
+        description:
+            "Prevent a completed drag/pan from also triggering Discord's camera focus action",
+        default: true
+    },
+
+    middleClickReset: {
+        type: OptionType.BOOLEAN,
+        description:
+            "Middle-click a webcam to reset its zoom and pan",
+        default: true
+    }
+});
 
 function clamp(
     value: number,
@@ -146,7 +208,17 @@ function restoreStyle(
     );
 }
 
-function getVideoTile(
+function isFullscreenContainer(
+    container: HTMLElement
+) {
+    return (
+        container.getAttribute(
+            FULLSCREEN_ATTRIBUTE
+        ) === "true"
+    );
+}
+
+function getDiscordVideoTile(
     target: EventTarget | null
 ): HTMLElement | null {
     if (!(target instanceof Element))
@@ -157,15 +229,11 @@ function getVideoTile(
     );
 }
 
-function getVideo(
-    tile: HTMLElement
+function getVisibleVideo(
+    container: HTMLElement
 ): HTMLVideoElement | null {
-    /*
-     * Prefer the visible video if Discord happens to have more than one
-     * video element inside a tile.
-     */
     const videos =
-        tile.querySelectorAll<HTMLVideoElement>(
+        container.querySelectorAll<HTMLVideoElement>(
             "video"
         );
 
@@ -184,14 +252,79 @@ function getVideo(
     return videos[0] ?? null;
 }
 
+function getVideoContext(
+    target: EventTarget | null
+): VideoContext | null {
+    if (!(target instanceof Element))
+        return null;
+
+    if (
+        target.closest(
+            `[${FULLSCREEN_UI_ATTRIBUTE}]`
+        )
+    ) {
+        return null;
+    }
+
+    const fullscreen =
+        target.closest<HTMLElement>(
+            `[${FULLSCREEN_ATTRIBUTE}="true"]`
+        );
+
+    if (fullscreen) {
+        const video =
+            fullscreen.querySelector<HTMLVideoElement>(
+                `video[${FULLSCREEN_VIDEO_ATTRIBUTE}]`
+            );
+
+        if (!video)
+            return null;
+
+        return {
+            video,
+            container:
+                fullscreen,
+            fullscreen:
+                true
+        };
+    }
+
+    const tile =
+        getDiscordVideoTile(
+            target
+        );
+
+    if (!tile)
+        return null;
+
+    const video =
+        getVisibleVideo(
+            tile
+        );
+
+    if (!video)
+        return null;
+
+    return {
+        video,
+        container:
+            tile,
+        fullscreen:
+            false
+    };
+}
+
 function getAnonymousVideoId(
     video: HTMLVideoElement
 ) {
     let id =
-        anonymousVideoIds.get(video);
+        anonymousVideoIds.get(
+            video
+        );
 
     if (id === undefined) {
-        id = nextAnonymousVideoId++;
+        id =
+            nextAnonymousVideoId++;
 
         anonymousVideoIds.set(
             video,
@@ -204,12 +337,8 @@ function getAnonymousVideoId(
 
 function getVideoKey(
     video: HTMLVideoElement,
-    tile: HTMLElement
+    container: HTMLElement
 ): string {
-    /*
-     * Best case:
-     * Discord keeps the same MediaStream while changing layouts.
-     */
     const source =
         video.srcObject;
 
@@ -220,29 +349,22 @@ function getVideoKey(
         return `stream:${source.id}`;
     }
 
-    /*
-     * Fallback to Discord's tile identifier.
-     */
+    const tile =
+        container.closest<HTMLElement>(
+            "[data-selenium-video-tile]"
+        );
+
     const tileId =
-        tile.getAttribute(
+        tile?.getAttribute(
             "data-selenium-video-tile"
         );
 
     if (tileId)
         return `tile:${tileId}`;
 
-    /*
-     * Some Discord layouts may expose a normal src/currentSrc.
-     */
     if (video.currentSrc)
         return `src:${video.currentSrc}`;
 
-    /*
-     * Last-resort per-element identifier.
-     *
-     * This one cannot survive element replacement, but prevents the plugin
-     * from failing entirely if Discord changes the video implementation.
-     */
     return `video:${getAnonymousVideoId(video)}`;
 }
 
@@ -262,86 +384,206 @@ function isMirrored(
             return false;
         }
 
-        const matrix =
+        return (
             new DOMMatrixReadOnly(
                 transform
-            );
-
-        return matrix.a < 0;
+            ).a < 0
+        );
     } catch {
         return false;
     }
 }
 
 /*
- * Forces Discord cameras to preserve their actual transmitted aspect ratio.
+ * At exactly 1x:
  *
- * Example:
+ * - Custom fullscreen always preserves the sender's full image.
+ * - Normal Discord tiles preserve it when fitAspectRatio is enabled.
  *
- * A 9:16 phone camera displayed on a 16:9 screen remains 9:16.
- *
- * Discord gets empty space on the left/right instead of cropping the
- * sender's top and bottom.
+ * As soon as the user zooms above 1x, this returns false so we switch
+ * to object-fit: cover and fill the entire frame.
  */
-function applyAspectRatioFit(
-    video: HTMLVideoElement,
-    tile: HTMLElement
+function shouldContainAtCurrentZoom(
+    state: ViewState
 ) {
-    video.style.setProperty(
+    if (
+        state.zoom >
+        MIN_ZOOM + 0.001
+    ) {
+        return false;
+    }
+
+    if (
+        isFullscreenContainer(
+            state.container
+        )
+    ) {
+        return true;
+    }
+
+    return (
+        settings.store
+            .fitAspectRatio
+    );
+}
+
+function applyContainMode(
+    state: ViewState
+) {
+    state.video.style.setProperty(
         "width",
         "100%",
         "important"
     );
 
-    video.style.setProperty(
+    state.video.style.setProperty(
         "height",
         "100%",
         "important"
     );
 
-    video.style.setProperty(
+    state.video.style.setProperty(
         "object-fit",
         "contain",
         "important"
     );
 
-    video.style.setProperty(
+    state.video.style.setProperty(
         "object-position",
         "center center",
         "important"
     );
 
-    tile.style.setProperty(
+    state.container.style.setProperty(
         "background-color",
         "#000",
-        "important"
-    );
-
-    tile.style.setProperty(
-        "overflow",
-        "hidden",
         "important"
     );
 }
 
 /*
- * Calculates the size of the actual visible video when object-fit: contain
- * is being used.
+ * Once zoomed above 1x the video switches to cover.
  *
- * The video may be much narrower than the Discord tile for portrait feeds.
+ * This means a portrait camera no longer remains a narrow portrait strip
+ * while zooming. It fills the viewport immediately, and the user can pan
+ * around the source image.
+ */
+function applyCoverMode(
+    state: ViewState
+) {
+    state.video.style.setProperty(
+        "width",
+        "100%",
+        "important"
+    );
+
+    state.video.style.setProperty(
+        "height",
+        "100%",
+        "important"
+    );
+
+    state.video.style.setProperty(
+        "object-fit",
+        "cover",
+        "important"
+    );
+
+    state.video.style.setProperty(
+        "object-position",
+        "center center",
+        "important"
+    );
+
+    state.container.style.setProperty(
+        "background-color",
+        "#000",
+        "important"
+    );
+}
+
+function restorePresentationStyles(
+    state: ViewState
+) {
+    restoreStyle(
+        state.video,
+        "object-fit",
+        state.originalObjectFit
+    );
+
+    restoreStyle(
+        state.video,
+        "object-position",
+        state.originalObjectPosition
+    );
+
+    restoreStyle(
+        state.video,
+        "width",
+        state.originalWidth
+    );
+
+    restoreStyle(
+        state.video,
+        "height",
+        state.originalHeight
+    );
+
+    restoreStyle(
+        state.container,
+        "background-color",
+        state.originalBackground
+    );
+}
+
+function getContainerSize(
+    container: HTMLElement
+) {
+    const rect =
+        container.getBoundingClientRect();
+
+    return {
+        width:
+            rect.width,
+
+        height:
+            rect.height
+    };
+}
+
+function getVideoAspect(
+    video: HTMLVideoElement
+): number | null {
+    if (
+        !video.videoWidth ||
+        !video.videoHeight
+    ) {
+        return null;
+    }
+
+    return (
+        video.videoWidth /
+        video.videoHeight
+    );
+}
+
+/*
+ * Actual rendered dimensions for object-fit: contain.
  */
 function getContainedVideoSize(
     video: HTMLVideoElement,
-    tile: HTMLElement
+    container: HTMLElement
 ) {
-    const rect =
-        tile.getBoundingClientRect();
+    const {
+        width:
+            containerWidth,
 
-    const containerWidth =
-        rect.width;
-
-    const containerHeight =
-        rect.height;
+        height:
+            containerHeight
+    } =
+        getContainerSize(
+            container
+        );
 
     if (
         containerWidth <= 0 ||
@@ -353,19 +595,20 @@ function getContainedVideoSize(
         };
     }
 
-    if (
-        !video.videoWidth ||
-        !video.videoHeight
-    ) {
+    const videoAspect =
+        getVideoAspect(
+            video
+        );
+
+    if (!videoAspect) {
         return {
-            width: containerWidth,
-            height: containerHeight
+            width:
+                containerWidth,
+
+            height:
+                containerHeight
         };
     }
-
-    const videoAspect =
-        video.videoWidth /
-        video.videoHeight;
 
     const containerAspect =
         containerWidth /
@@ -375,11 +618,6 @@ function getContainedVideoSize(
         videoAspect >
         containerAspect
     ) {
-        /*
-         * Video is wider relative to the container.
-         *
-         * Width touches the container edges.
-         */
         return {
             width:
                 containerWidth,
@@ -390,11 +628,6 @@ function getContainedVideoSize(
         };
     }
 
-    /*
-     * Video is taller relative to the container.
-     *
-     * Height touches the container edges.
-     */
     return {
         width:
             containerHeight *
@@ -406,29 +639,138 @@ function getContainedVideoSize(
 }
 
 /*
- * Determines how far the zoomed video can actually be panned before empty
- * space would be exposed.
+ * Actual rendered dimensions for object-fit: cover.
+ *
+ * One axis exactly matches the viewport; the other extends beyond it.
+ * Those extra pixels are what make it possible to pan around the crop.
  */
-function getPanLimits(
+function getCoveredVideoSize(
     video: HTMLVideoElement,
-    tile: HTMLElement,
-    zoom: number
+    container: HTMLElement
+) {
+    const {
+        width:
+            containerWidth,
+
+        height:
+            containerHeight
+    } =
+        getContainerSize(
+            container
+        );
+
+    if (
+        containerWidth <= 0 ||
+        containerHeight <= 0
+    ) {
+        return {
+            width: 0,
+            height: 0
+        };
+    }
+
+    const videoAspect =
+        getVideoAspect(
+            video
+        );
+
+    if (!videoAspect) {
+        return {
+            width:
+                containerWidth,
+
+            height:
+                containerHeight
+        };
+    }
+
+    const containerAspect =
+        containerWidth /
+        containerHeight;
+
+    if (
+        videoAspect >
+        containerAspect
+    ) {
+        return {
+            width:
+                containerHeight *
+                videoAspect,
+
+            height:
+                containerHeight
+        };
+    }
+
+    return {
+        width:
+            containerWidth,
+
+        height:
+            containerWidth /
+            videoAspect
+    };
+}
+
+function getBaseVideoSize(
+    state: ViewState
+) {
+    /*
+     * 1x:
+     * use real contained dimensions.
+     */
+    if (
+        shouldContainAtCurrentZoom(
+            state
+        )
+    ) {
+        return getContainedVideoSize(
+            state.video,
+            state.container
+        );
+    }
+
+    /*
+     * >1x:
+     * use actual cover dimensions, including any portion already extending
+     * beyond the viewport.
+     */
+    if (
+        state.zoom >
+        MIN_ZOOM + 0.001
+    ) {
+        return getCoveredVideoSize(
+            state.video,
+            state.container
+        );
+    }
+
+    /*
+     * Aspect-ratio correction disabled at 1x.
+     */
+    return getContainerSize(
+        state.container
+    );
+}
+
+function getPanLimits(
+    state: ViewState
 ) {
     const rect =
-        tile.getBoundingClientRect();
+        state.container
+            .getBoundingClientRect();
 
-    const contained =
-        getContainedVideoSize(
-            video,
-            tile
+    const base =
+        getBaseVideoSize(
+            state
         );
 
     return {
         x: Math.max(
             0,
             (
-                contained.width *
-                zoom -
+                base.width *
+                state.zoom -
                 rect.width
             ) / 2
         ),
@@ -436,139 +778,211 @@ function getPanLimits(
         y: Math.max(
             0,
             (
-                contained.height *
-                zoom -
+                base.height *
+                state.zoom -
                 rect.height
             ) / 2
         )
     };
 }
 
-function createState(
-    video: HTMLVideoElement,
-    tile: HTMLElement,
-    key: string
-): ViewState {
-    /*
-     * Save all Discord styles BEFORE modifying anything.
-     */
-    const originalTranslate =
-        getStyleSnapshot(
-            video,
-            "translate"
+function clampPan(
+    state: ViewState
+) {
+    const limits =
+        getPanLimits(
+            state
         );
 
-    const originalScale =
-        getStyleSnapshot(
-            video,
-            "scale"
-        );
-
-    const originalTransformOrigin =
-        getStyleSnapshot(
-            video,
-            "transform-origin"
-        );
-
-    const originalWillChange =
-        getStyleSnapshot(
-            video,
-            "will-change"
-        );
-
-    const originalObjectFit =
-        getStyleSnapshot(
-            video,
-            "object-fit"
-        );
-
-    const originalObjectPosition =
-        getStyleSnapshot(
-            video,
-            "object-position"
-        );
-
-    const originalWidth =
-        getStyleSnapshot(
-            video,
-            "width"
-        );
-
-    const originalHeight =
-        getStyleSnapshot(
-            video,
-            "height"
-        );
-
-    const originalTileOverflow =
-        getStyleSnapshot(
-            tile,
-            "overflow"
-        );
-
-    const originalTileCursor =
-        getStyleSnapshot(
-            tile,
-            "cursor"
-        );
-
-    const originalTileBackground =
-        getStyleSnapshot(
-            tile,
-            "background-color"
-        );
-
-    applyAspectRatioFit(
-        video,
-        tile
+    state.x = clamp(
+        state.x,
+        -limits.x,
+        limits.x
     );
 
-    const saved =
-        savedStates.get(key);
+    state.y = clamp(
+        state.y,
+        -limits.y,
+        limits.y
+    );
+}
 
-    const zoom =
-        saved?.zoom ??
-        MIN_ZOOM;
+function saveState(
+    state: ViewState
+) {
+    if (
+        !settings.store
+            .rememberView
+    ) {
+        return;
+    }
+
+    if (
+        state.zoom <=
+        MIN_ZOOM + 0.001
+    ) {
+        savedStates.delete(
+            state.key
+        );
+
+        return;
+    }
 
     const limits =
         getPanLimits(
-            video,
-            tile,
-            zoom
+            state
         );
 
+    savedStates.set(
+        state.key,
+        {
+            zoom:
+                state.zoom,
+
+            panX:
+                limits.x > 0
+                    ? clamp(
+                        state.x /
+                        limits.x,
+                        -1,
+                        1
+                    )
+                    : 0,
+
+            panY:
+                limits.y > 0
+                    ? clamp(
+                        state.y /
+                        limits.y,
+                        -1,
+                        1
+                    )
+                    : 0
+        }
+    );
+}
+
+function loadSavedState(
+    state: ViewState
+) {
+    if (
+        !settings.store
+            .rememberView
+    ) {
+        return;
+    }
+
+    const saved =
+        savedStates.get(
+            state.key
+        );
+
+    if (!saved)
+        return;
+
+    state.zoom =
+        saved.zoom;
+
+    const limits =
+        getPanLimits(
+            state
+        );
+
+    state.x =
+        saved.panX *
+        limits.x;
+
+    state.y =
+        saved.panY *
+        limits.y;
+}
+
+function createState(
+    video: HTMLVideoElement,
+    container: HTMLElement,
+    key: string
+): ViewState {
     const state: ViewState = {
         key,
-
         video,
-        tile,
+        container,
 
-        zoom,
+        zoom:
+            MIN_ZOOM,
 
-        x:
-            (saved?.panX ?? 0) *
-            limits.x,
-
-        y:
-            (saved?.panY ?? 0) *
-            limits.y,
+        x: 0,
+        y: 0,
 
         mirroredX:
-            isMirrored(video),
+            isMirrored(
+                video
+            ),
 
-        originalTranslate,
-        originalScale,
-        originalTransformOrigin,
-        originalWillChange,
+        originalTranslate:
+            getStyleSnapshot(
+                video,
+                "translate"
+            ),
 
-        originalObjectFit,
-        originalObjectPosition,
-        originalWidth,
-        originalHeight,
+        originalScale:
+            getStyleSnapshot(
+                video,
+                "scale"
+            ),
 
-        originalTileOverflow,
-        originalTileCursor,
-        originalTileBackground
+        originalTransformOrigin:
+            getStyleSnapshot(
+                video,
+                "transform-origin"
+            ),
+
+        originalWillChange:
+            getStyleSnapshot(
+                video,
+                "will-change"
+            ),
+
+        originalObjectFit:
+            getStyleSnapshot(
+                video,
+                "object-fit"
+            ),
+
+        originalObjectPosition:
+            getStyleSnapshot(
+                video,
+                "object-position"
+            ),
+
+        originalWidth:
+            getStyleSnapshot(
+                video,
+                "width"
+            ),
+
+        originalHeight:
+            getStyleSnapshot(
+                video,
+                "height"
+            ),
+
+        originalOverflow:
+            getStyleSnapshot(
+                container,
+                "overflow"
+            ),
+
+        originalCursor:
+            getStyleSnapshot(
+                container,
+                "cursor"
+            ),
+
+        originalBackground:
+            getStyleSnapshot(
+                container,
+                "background-color"
+            )
     };
 
     states.set(
@@ -578,6 +992,10 @@ function createState(
 
     activeVideos.add(
         video
+    );
+
+    loadSavedState(
+        state
     );
 
     return state;
@@ -636,24 +1054,26 @@ function restoreElement(
     );
 
     restoreStyle(
-        state.tile,
+        state.container,
         "overflow",
-        state.originalTileOverflow
+        state.originalOverflow
     );
 
     restoreStyle(
-        state.tile,
+        state.container,
         "cursor",
-        state.originalTileCursor
+        state.originalCursor
     );
 
     restoreStyle(
-        state.tile,
+        state.container,
         "background-color",
-        state.originalTileBackground
+        state.originalBackground
     );
 
-    states.delete(video);
+    states.delete(
+        video
+    );
 
     activeVideos.delete(
         video
@@ -663,80 +1083,54 @@ function restoreElement(
         dragState?.video ===
         video
     ) {
-        dragState = null;
+        dragState =
+            null;
     }
 }
 
-function clampPan(
-    state: ViewState
+function getState(
+    video: HTMLVideoElement,
+    container: HTMLElement
 ) {
-    const limits =
-        getPanLimits(
-            state.video,
-            state.tile,
-            state.zoom
+    const key =
+        getVideoKey(
+            video,
+            container
         );
 
-    state.x = clamp(
-        state.x,
-        -limits.x,
-        limits.x
-    );
+    const current =
+        states.get(
+            video
+        );
 
-    state.y = clamp(
-        state.y,
-        -limits.y,
-        limits.y
-    );
-}
-
-function saveState(
-    state: ViewState
-) {
     if (
-        state.zoom <=
-        MIN_ZOOM + 0.001
+        current &&
+        (
+            current.container !==
+                container ||
+            current.key !==
+                key
+        )
     ) {
-        savedStates.delete(
-            state.key
+        saveState(
+            current
         );
 
-        return;
+        restoreElement(
+            video,
+            current
+        );
     }
 
-    const limits =
-        getPanLimits(
-            state.video,
-            state.tile,
-            state.zoom
-        );
-
-    savedStates.set(
-        state.key,
-        {
-            zoom:
-                state.zoom,
-
-            panX:
-                limits.x > 0
-                    ? clamp(
-                        state.x /
-                        limits.x,
-                        -1,
-                        1
-                    )
-                    : 0,
-
-            panY:
-                limits.y > 0
-                    ? clamp(
-                        state.y /
-                        limits.y,
-                        -1,
-                        1
-                    )
-                    : 0
-        }
+    return (
+        states.get(
+            video
+        ) ??
+        createState(
+            video,
+            container,
+            key
+        )
     );
 }
 
@@ -744,31 +1138,48 @@ function apply(
     video: HTMLVideoElement,
     state: ViewState
 ) {
-    applyAspectRatioFit(
-        video,
-        state.tile
+    /*
+     * 1x:
+     * show full original aspect ratio.
+     *
+     * >1x:
+     * fill the viewport using cover.
+     */
+    if (
+        shouldContainAtCurrentZoom(
+            state
+        )
+    ) {
+        applyContainMode(
+            state
+        );
+    } else if (
+        state.zoom >
+        MIN_ZOOM + 0.001
+    ) {
+        applyCoverMode(
+            state
+        );
+    } else {
+        restorePresentationStyles(
+            state
+        );
+    }
+
+    clampPan(
+        state
     );
 
-    clampPan(state);
-
-    /*
-     * Re-evaluate mirroring because Discord can change the camera styling
-     * when moving it between layouts.
-     */
     state.mirroredX =
-        isMirrored(video);
+        isMirrored(
+            video
+        );
 
     const translateX =
         state.mirroredX
             ? -state.x
             : state.x;
 
-    /*
-     * Individual CSS transform properties are intentional.
-     *
-     * We do not overwrite Discord's transform property because Discord may
-     * already use transform to mirror a local webcam.
-     */
     video.style.setProperty(
         "translate",
         `${translateX}px ${state.y}px`,
@@ -777,7 +1188,9 @@ function apply(
 
     video.style.setProperty(
         "scale",
-        String(state.zoom),
+        String(
+            state.zoom
+        ),
         "important"
     );
 
@@ -793,71 +1206,88 @@ function apply(
         "important"
     );
 
-    state.tile.style.setProperty(
-        "cursor",
-        state.zoom > 1
-            ? dragState?.video === video
-                ? "grabbing"
-                : "grab"
-            : state.originalTileCursor.value,
-        "important"
-    );
-
-    saveState(state);
-}
-
-function getState(
-    video: HTMLVideoElement,
-    tile: HTMLElement
-) {
-    const key =
-        getVideoKey(
-            video,
-            tile
-        );
-
-    const current =
-        states.get(video);
-
-    /*
-     * Discord reused the video but moved it into another tile/container.
-     */
     if (
-        current &&
-        (
-            current.tile !== tile ||
-            current.key !== key
+        state.zoom >
+            MIN_ZOOM ||
+        isFullscreenContainer(
+            state.container
         )
     ) {
-        saveState(current);
-
-        restoreElement(
-            video,
-            current
+        state.container.style
+            .setProperty(
+                "overflow",
+                "hidden",
+                "important"
+            );
+    } else {
+        restoreStyle(
+            state.container,
+            "overflow",
+            state.originalOverflow
         );
     }
 
-    return (
-        states.get(video) ??
-        createState(
-            video,
-            tile,
-            key
-        )
+    if (
+        settings.store.dragPan &&
+        state.zoom >
+            MIN_ZOOM
+    ) {
+        state.container.style
+            .setProperty(
+                "cursor",
+                dragState?.video ===
+                    video
+                    ? "grabbing"
+                    : "grab",
+                "important"
+            );
+    } else {
+        restoreStyle(
+            state.container,
+            "cursor",
+            state.originalCursor
+        );
+    }
+
+    saveState(
+        state
     );
+}
+
+function refreshActiveStates() {
+    for (
+        const video of
+        [...activeVideos]
+    ) {
+        const state =
+            states.get(
+                video
+            );
+
+        if (state) {
+            apply(
+                video,
+                state
+            );
+        }
+    }
 }
 
 function resetKey(
     key: string
 ) {
-    savedStates.delete(key);
+    savedStates.delete(
+        key
+    );
 
     for (
         const video of
         [...activeVideos]
     ) {
         const state =
-            states.get(video);
+            states.get(
+                video
+            );
 
         if (
             !state ||
@@ -866,14 +1296,14 @@ function resetKey(
             continue;
         }
 
-        /*
-         * Reset zoom/pan but keep aspect-ratio correction active.
-         */
         state.zoom =
             MIN_ZOOM;
 
-        state.x = 0;
-        state.y = 0;
+        state.x =
+            0;
+
+        state.y =
+            0;
 
         apply(
             video,
@@ -883,113 +1313,89 @@ function resetKey(
 }
 
 function resetVideo(
-    video: HTMLVideoElement
+    video: HTMLVideoElement,
+    container: HTMLElement
 ) {
-    const existing =
-        states.get(video);
-
-    if (existing) {
-        resetKey(
-            existing.key
+    const state =
+        states.get(
+            video
         );
-
-        return;
-    }
-
-    const tile =
-        video.closest<HTMLElement>(
-            "[data-selenium-video-tile]"
-        );
-
-    if (!tile)
-        return;
 
     resetKey(
+        state?.key ??
         getVideoKey(
             video,
-            tile
+            container
         )
     );
 }
 
-/*
- * Attaches our aspect correction and restores saved zoom/pan after Discord
- * creates or moves a webcam video.
- */
-function restoreVideo(
-    video: HTMLVideoElement
+function syncStatesForKey(
+    key: string,
+    except?: HTMLVideoElement
 ) {
-    const tile =
-        video.closest<HTMLElement>(
-            "[data-selenium-video-tile]"
-        );
-
-    if (!tile)
-        return;
-
-    const key =
-        getVideoKey(
-            video,
-            tile
-        );
-
-    const current =
-        states.get(video);
-
     if (
-        current &&
-        current.tile === tile &&
-        current.key === key
+        !settings.store
+            .rememberView
     ) {
-        /*
-         * Discord may have rewritten its styles, so reassert ours.
-         */
-        applyAspectRatioFit(
-            video,
-            tile
-        );
-
-        if (
-            current.zoom >
-            MIN_ZOOM
-        ) {
-            apply(
-                video,
-                current
-            );
-        }
-
         return;
     }
 
-    if (current) {
-        saveState(current);
-
-        restoreElement(
-            video,
-            current
-        );
-    }
-
-    const state =
-        createState(
-            video,
-            tile,
+    const saved =
+        savedStates.get(
             key
         );
 
-    /*
-     * Even at 1x, keep object-fit: contain so Discord never crops the feed.
-     */
-    applyAspectRatioFit(
-        video,
-        tile
-    );
-
-    if (
-        state.zoom >
-        MIN_ZOOM
+    for (
+        const video of
+        [...activeVideos]
     ) {
+        if (
+            video ===
+            except
+        ) {
+            continue;
+        }
+
+        const state =
+            states.get(
+                video
+            );
+
+        if (
+            !state ||
+            state.key !== key
+        ) {
+            continue;
+        }
+
+        if (!saved) {
+            state.zoom =
+                MIN_ZOOM;
+
+            state.x =
+                0;
+
+            state.y =
+                0;
+        } else {
+            state.zoom =
+                saved.zoom;
+
+            const limits =
+                getPanLimits(
+                    state
+                );
+
+            state.x =
+                saved.panX *
+                limits.x;
+
+            state.y =
+                saved.panY *
+                limits.y;
+        }
+
         apply(
             video,
             state
@@ -997,21 +1403,54 @@ function restoreVideo(
     }
 }
 
+function restoreDiscordVideo(
+    video: HTMLVideoElement
+) {
+    if (
+        video.hasAttribute(
+            FULLSCREEN_VIDEO_ATTRIBUTE
+        )
+    ) {
+        return;
+    }
+
+    const container =
+        video.closest<HTMLElement>(
+            "[data-selenium-video-tile]"
+        );
+
+    if (!container)
+        return;
+
+    const state =
+        getState(
+            video,
+            container
+        );
+
+    apply(
+        video,
+        state
+    );
+}
+
 function scanVideos() {
-    scanFrame = null;
+    scanFrame =
+        null;
 
     document
         .querySelectorAll<HTMLVideoElement>(
             "[data-selenium-video-tile] video"
         )
         .forEach(
-            restoreVideo
+            restoreDiscordVideo
         );
 }
 
 function scheduleVideoScan() {
     if (
-        scanFrame !== null
+        scanFrame !==
+        null
     ) {
         return;
     }
@@ -1022,51 +1461,485 @@ function scheduleVideoScan() {
         );
 }
 
-function onLoadedMetadata(
-    event: Event
+function makeFullscreenButton(
+    text: string,
+    title: string
+) {
+    const button =
+        document.createElement(
+            "button"
+        );
+
+    button.textContent =
+        text;
+
+    button.title =
+        title;
+
+    button.setAttribute(
+        FULLSCREEN_UI_ATTRIBUTE,
+        "true"
+    );
+
+    Object.assign(
+        button.style,
+        {
+            position:
+                "absolute",
+
+            top:
+                "18px",
+
+            right:
+                "18px",
+
+            zIndex:
+                "10",
+
+            width:
+                "44px",
+
+            height:
+                "44px",
+
+            border:
+                "none",
+
+            borderRadius:
+                "50%",
+
+            background:
+                "rgba(0, 0, 0, 0.65)",
+
+            color:
+                "#fff",
+
+            fontSize:
+                "28px",
+
+            lineHeight:
+                "40px",
+
+            cursor:
+                "pointer",
+
+            fontFamily:
+                "sans-serif"
+        }
+    );
+
+    return button;
+}
+
+function createFullscreenHint() {
+    const hint =
+        document.createElement(
+            "div"
+        );
+
+    hint.setAttribute(
+        FULLSCREEN_UI_ATTRIBUTE,
+        "true"
+    );
+
+    hint.textContent =
+        "Double-click or Esc to exit  •  Wheel to zoom  •  Drag to pan";
+
+    Object.assign(
+        hint.style,
+        {
+            position:
+                "absolute",
+
+            left:
+                "50%",
+
+            bottom:
+                "22px",
+
+            transform:
+                "translateX(-50%)",
+
+            zIndex:
+                "10",
+
+            pointerEvents:
+                "none",
+
+            padding:
+                "8px 12px",
+
+            borderRadius:
+                "8px",
+
+            background:
+                "rgba(0, 0, 0, 0.55)",
+
+            color:
+                "#fff",
+
+            fontFamily:
+                "sans-serif",
+
+            fontSize:
+                "13px",
+
+            whiteSpace:
+                "nowrap",
+
+            userSelect:
+                "none"
+        }
+    );
+
+    return hint;
+}
+
+function openCustomFullscreen(
+    sourceVideo: HTMLVideoElement,
+    sourceContainer: HTMLElement
 ) {
     if (
-        !(event.target instanceof HTMLVideoElement)
+        !settings.store
+            .customFullscreen
     ) {
         return;
     }
 
-    restoreVideo(
-        event.target
+    closeCustomFullscreen();
+
+    const sourceState =
+        getState(
+            sourceVideo,
+            sourceContainer
+        );
+
+    saveState(
+        sourceState
     );
+
+    const key =
+        sourceState.key;
+
+    const overlay =
+        document.createElement(
+            "div"
+        );
+
+    overlay.setAttribute(
+        FULLSCREEN_ATTRIBUTE,
+        "true"
+    );
+
+    Object.assign(
+        overlay.style,
+        {
+            position:
+                "fixed",
+
+            inset:
+                "0",
+
+            zIndex:
+                "2147483647",
+
+            width:
+                "100vw",
+
+            height:
+                "100vh",
+
+            background:
+                "#000",
+
+            display:
+                "flex",
+
+            alignItems:
+                "center",
+
+            justifyContent:
+                "center",
+
+            overflow:
+                "hidden",
+
+            userSelect:
+                "none",
+
+            touchAction:
+                "none"
+        }
+    );
+
+    const video =
+        document.createElement(
+            "video"
+        );
+
+    video.setAttribute(
+        FULLSCREEN_VIDEO_ATTRIBUTE,
+        "true"
+    );
+
+    video.autoplay =
+        true;
+
+    video.muted =
+        true;
+
+    video.playsInline =
+        true;
+
+    video.controls =
+        false;
+
+    video.disablePictureInPicture =
+        true;
+
+    Object.assign(
+        video.style,
+        {
+            width:
+                "100%",
+
+            height:
+                "100%",
+
+            objectFit:
+                "contain",
+
+            objectPosition:
+                "center center",
+
+            background:
+                "#000"
+        }
+    );
+
+    const source =
+        sourceVideo.srcObject;
+
+    if (
+        source instanceof
+        MediaStream
+    ) {
+        video.srcObject =
+            source;
+    } else if (
+        sourceVideo.currentSrc
+    ) {
+        video.src =
+            sourceVideo.currentSrc;
+    }
+
+    if (
+        isMirrored(
+            sourceVideo
+        )
+    ) {
+        video.style.transform =
+            "scaleX(-1)";
+    }
+
+    const closeButton =
+        makeFullscreenButton(
+            "×",
+            "Close fullscreen"
+        );
+
+    closeButton.addEventListener(
+        "click",
+        event => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            closeCustomFullscreen();
+        }
+    );
+
+    const hint =
+        createFullscreenHint();
+
+    overlay.append(
+        video,
+        closeButton,
+        hint
+    );
+
+    document.body.append(
+        overlay
+    );
+
+    const state =
+        createState(
+            video,
+            overlay,
+            key
+        );
+
+    if (
+        !settings.store
+            .rememberView
+    ) {
+        state.zoom =
+            MIN_ZOOM;
+
+        state.x =
+            0;
+
+        state.y =
+            0;
+    }
+
+    apply(
+        video,
+        state
+    );
+
+    fullscreenSession = {
+        overlay,
+        video,
+        key,
+
+        requestedNativeFullscreen:
+            false
+    };
+
+    void video
+        .play()
+        .catch(
+            () => {}
+        );
+
+    if (
+        settings.store
+            .nativeFullscreen &&
+        typeof overlay
+            .requestFullscreen ===
+            "function"
+    ) {
+        fullscreenSession
+            .requestedNativeFullscreen =
+            true;
+
+        void overlay
+            .requestFullscreen()
+            .catch(
+                () => {}
+            );
+    }
+}
+
+function closeCustomFullscreen() {
+    const session =
+        fullscreenSession;
+
+    if (!session)
+        return;
+
+    fullscreenSession =
+        null;
+
+    const state =
+        states.get(
+            session.video
+        );
+
+    if (state) {
+        saveState(
+            state
+        );
+
+        restoreElement(
+            session.video,
+            state
+        );
+    }
+
+    if (
+        document.fullscreenElement ===
+            session.overlay &&
+        typeof document
+            .exitFullscreen ===
+            "function"
+    ) {
+        void document
+            .exitFullscreen()
+            .catch(
+                () => {}
+            );
+    }
+
+    session.video.pause();
+
+    if (
+        session.video
+            .srcObject
+    ) {
+        session.video.srcObject =
+            null;
+    }
+
+    session.overlay.remove();
+
+    syncStatesForKey(
+        session.key
+    );
+
+    scheduleVideoScan();
+}
+
+function onFullscreenChange() {
+    const session =
+        fullscreenSession;
+
+    if (
+        !session ||
+        !session
+            .requestedNativeFullscreen
+    ) {
+        return;
+    }
+
+    if (
+        document.fullscreenElement !==
+        session.overlay
+    ) {
+        closeCustomFullscreen();
+    }
 }
 
 function onWheel(
     event: WheelEvent
 ) {
-    /*
-     * Give Discord-native handlers priority if they already consumed it.
-     */
     if (
+        !settings.store
+            .wheelZoom ||
         event.defaultPrevented ||
         event.ctrlKey
     ) {
         return;
     }
 
-    const tile =
-        getVideoTile(
+    const context =
+        getVideoContext(
             event.target
         );
 
-    if (!tile)
+    if (!context)
         return;
 
-    const video =
-        getVideo(tile);
-
-    if (!video)
-        return;
+    const {
+        video,
+        container
+    } =
+        context;
 
     const state =
         getState(
             video,
-            tile
+            container
         );
 
     const oldZoom =
@@ -1087,47 +1960,43 @@ function onWheel(
             MAX_ZOOM
         );
 
-    /*
-     * At minimum zoom, scrolling outward should continue behaving normally.
-     */
     if (
         oldZoom <=
-            MIN_ZOOM + 0.001 &&
+            MIN_ZOOM +
+            0.001 &&
         newZoom <=
-            MIN_ZOOM + 0.001
+            MIN_ZOOM +
+            0.001
     ) {
         return;
     }
 
     event.preventDefault();
 
-    const previousZoom =
-        state.zoom;
-
     const rect =
-        tile.getBoundingClientRect();
+        container
+            .getBoundingClientRect();
 
     const pointerX =
         event.clientX -
         (
             rect.left +
-            rect.width / 2
+            rect.width /
+            2
         );
 
     const pointerY =
         event.clientY -
         (
             rect.top +
-            rect.height / 2
+            rect.height /
+            2
         );
 
     const ratio =
         newZoom /
-        previousZoom;
+        oldZoom;
 
-    /*
-     * Zoom toward the cursor.
-     */
     state.x =
         pointerX -
         (
@@ -1147,17 +2016,26 @@ function onWheel(
 
     if (
         state.zoom <=
-        MIN_ZOOM + 0.001
+        MIN_ZOOM +
+        0.001
     ) {
         state.zoom =
             MIN_ZOOM;
 
-        state.x = 0;
-        state.y = 0;
+        state.x =
+            0;
 
-        savedStates.delete(
-            state.key
-        );
+        state.y =
+            0;
+
+        if (
+            settings.store
+                .rememberView
+        ) {
+            savedStates.delete(
+                state.key
+            );
+        }
     }
 
     apply(
@@ -1170,30 +2048,32 @@ function onMouseDown(
     event: MouseEvent
 ) {
     if (
+        !settings.store
+            .dragPan ||
         event.defaultPrevented ||
         event.button !== 0
     ) {
         return;
     }
 
-    const tile =
-        getVideoTile(
+    const context =
+        getVideoContext(
             event.target
         );
 
-    if (!tile)
+    if (!context)
         return;
 
-    const video =
-        getVideo(tile);
-
-    if (!video)
-        return;
+    const {
+        video,
+        container
+    } =
+        context;
 
     const state =
         getState(
             video,
-            tile
+            container
         );
 
     if (
@@ -1205,6 +2085,7 @@ function onMouseDown(
 
     dragState = {
         video,
+
         key:
             state.key,
 
@@ -1224,12 +2105,6 @@ function onMouseDown(
             false
     };
 
-    /*
-     * Prevent browser-native video/image dragging.
-     *
-     * A click is still allowed unless the pointer actually moves enough to
-     * cross DRAG_THRESHOLD.
-     */
     event.preventDefault();
 
     apply(
@@ -1241,8 +2116,13 @@ function onMouseDown(
 function onMouseMove(
     event: MouseEvent
 ) {
-    if (!dragState)
+    if (
+        !settings.store
+            .dragPan ||
+        !dragState
+    ) {
         return;
+    }
 
     const currentDrag =
         dragState;
@@ -1253,7 +2133,9 @@ function onMouseMove(
         );
 
     if (!state) {
-        dragState = null;
+        dragState =
+            null;
+
         return;
     }
 
@@ -1277,11 +2159,11 @@ function onMouseMove(
             true;
     }
 
-    /*
-     * Do not alter pan until the movement is definitely a drag.
-     */
-    if (!currentDrag.moved)
+    if (
+        !currentDrag.moved
+    ) {
         return;
+    }
 
     event.preventDefault();
 
@@ -1329,19 +2211,14 @@ function onMouseUp(
             currentDrag.video
         );
 
-    dragState = null;
+    dragState =
+        null;
 
     if (
-        currentDrag.moved
+        currentDrag.moved &&
+        settings.store
+            .preventFullscreenWhilePanning
     ) {
-        /*
-         * Browsers normally emit a click after:
-         *
-         * mousedown -> drag -> mouseup -> click
-         *
-         * Discord would interpret that click as "focus/fullscreen camera".
-         * Suppress it only when an actual pan occurred.
-         */
         suppressedClicks.set(
             currentDrag.key,
 
@@ -1363,24 +2240,25 @@ function onMouseUp(
 function shouldSuppressClick(
     event: MouseEvent
 ) {
-    const tile =
-        getVideoTile(
+    if (
+        !settings.store
+            .preventFullscreenWhilePanning
+    ) {
+        return false;
+    }
+
+    const context =
+        getVideoContext(
             event.target
         );
 
-    if (!tile)
-        return false;
-
-    const video =
-        getVideo(tile);
-
-    if (!video)
+    if (!context)
         return false;
 
     const key =
         getVideoKey(
-            video,
-            tile
+            context.video,
+            context.container
         );
 
     const until =
@@ -1405,84 +2283,133 @@ function shouldSuppressClick(
     return true;
 }
 
+function suppressEvent(
+    event: MouseEvent
+) {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+}
+
 function onClickCapture(
     event: MouseEvent
 ) {
     if (
-        !shouldSuppressClick(
+        shouldSuppressClick(
             event
         )
     ) {
-        return;
+        suppressEvent(
+            event
+        );
     }
-
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
 }
 
 function onDoubleClickCapture(
     event: MouseEvent
 ) {
     if (
-        !shouldSuppressClick(
+        shouldSuppressClick(
             event
         )
+    ) {
+        suppressEvent(
+            event
+        );
+
+        return;
+    }
+
+    if (
+        !settings.store
+            .customFullscreen
     ) {
         return;
     }
 
-    event.preventDefault();
-    event.stopPropagation();
-    event.stopImmediatePropagation();
+    const target =
+        event.target;
+
+    if (
+        !(target instanceof
+            Element)
+    ) {
+        return;
+    }
+
+    const fullscreen =
+        target.closest<HTMLElement>(
+            `[${FULLSCREEN_ATTRIBUTE}="true"]`
+        );
+
+    if (fullscreen) {
+        if (
+            target.closest(
+                `[${FULLSCREEN_UI_ATTRIBUTE}]`
+            )
+        ) {
+            return;
+        }
+
+        suppressEvent(
+            event
+        );
+
+        closeCustomFullscreen();
+
+        return;
+    }
+
+    const context =
+        getVideoContext(
+            target
+        );
+
+    if (
+        !context ||
+        context.fullscreen
+    ) {
+        return;
+    }
+
+    suppressEvent(
+        event
+    );
+
+    openCustomFullscreen(
+        context.video,
+        context.container
+    );
 }
 
 function onAuxClick(
     event: MouseEvent
 ) {
-    /*
-     * Middle-click resets zoom and pan.
-     */
     if (
+        !settings.store
+            .middleClickReset ||
         event.button !== 1
     ) {
         return;
     }
 
-    const tile =
-        getVideoTile(
+    const context =
+        getVideoContext(
             event.target
         );
 
-    if (!tile)
-        return;
-
-    const video =
-        getVideo(tile);
-
-    if (!video)
+    if (!context)
         return;
 
     const state =
-        states.get(video);
-
-    const key =
-        state?.key ??
-        getVideoKey(
-            video,
-            tile
+        states.get(
+            context.video
         );
 
-    const saved =
-        savedStates.get(key);
-
     if (
-        !saved &&
-        (
-            !state ||
-            state.zoom <=
-                MIN_ZOOM
-        )
+        !state ||
+        state.zoom <=
+            MIN_ZOOM
     ) {
         return;
     }
@@ -1490,8 +2417,26 @@ function onAuxClick(
     event.preventDefault();
 
     resetVideo(
-        video
+        context.video,
+        context.container
     );
+}
+
+function onKeyDown(
+    event: KeyboardEvent
+) {
+    if (
+        event.key !==
+            "Escape" ||
+        !fullscreenSession
+    ) {
+        return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    closeCustomFullscreen();
 }
 
 function onWindowBlur() {
@@ -1506,7 +2451,8 @@ function onWindowBlur() {
             currentDrag.video
         );
 
-    dragState = null;
+    dragState =
+        null;
 
     if (state) {
         apply(
@@ -1516,19 +2462,69 @@ function onWindowBlur() {
     }
 }
 
+function onLoadedMetadata(
+    event: Event
+) {
+    if (
+        !(
+            event.target instanceof
+            HTMLVideoElement
+        )
+    ) {
+        return;
+    }
+
+    const video =
+        event.target;
+
+    if (
+        video.hasAttribute(
+            FULLSCREEN_VIDEO_ATTRIBUTE
+        )
+    ) {
+        const state =
+            states.get(
+                video
+            );
+
+        if (state) {
+            if (
+                settings.store
+                    .rememberView
+            ) {
+                loadSavedState(
+                    state
+                );
+            }
+
+            apply(
+                video,
+                state
+            );
+        }
+
+        return;
+    }
+
+    restoreDiscordVideo(
+        video
+    );
+}
+
 export default definePlugin({
-    name: "WebcamZoom",
+    name:
+        "WebcamZoom",
 
     description:
-        "Adds aspect-correct webcam viewing, mouse-wheel zooming and click-drag panning.",
+        "Adds aspect-correct webcams, mouse-wheel zoom, drag panning and true fullscreen camera viewing.",
 
     authors: [
         {
-            name: "Chay",
-            /*
-             * Replace this with your Discord user ID if desired.
-             */
-            id: 0n
+            name:
+                "Chaython",
+
+            id:
+                1415804298771824740n
         }
     ],
 
@@ -1537,21 +2533,18 @@ export default definePlugin({
         "Media"
     ],
 
+    settings,
+
     start() {
-        /*
-         * Wheel zoom.
-         */
         document.addEventListener(
             "wheel",
             onWheel,
             {
-                passive: false
+                passive:
+                    false
             }
         );
 
-        /*
-         * Drag panning.
-         */
         document.addEventListener(
             "mousedown",
             onMouseDown
@@ -1567,10 +2560,6 @@ export default definePlugin({
             onMouseUp
         );
 
-        /*
-         * Capture-phase handlers prevent the click generated after a pan
-         * from making the camera focused/fullscreen.
-         */
         document.addEventListener(
             "click",
             onClickCapture,
@@ -1583,22 +2572,26 @@ export default definePlugin({
             true
         );
 
-        /*
-         * Middle-click reset.
-         */
         document.addEventListener(
             "auxclick",
             onAuxClick
         );
 
-        /*
-         * When video metadata becomes available we can calculate its real
-         * transmitted aspect ratio and pan bounds accurately.
-         */
         document.addEventListener(
             "loadedmetadata",
             onLoadedMetadata,
             true
+        );
+
+        document.addEventListener(
+            "keydown",
+            onKeyDown,
+            true
+        );
+
+        document.addEventListener(
+            "fullscreenchange",
+            onFullscreenChange
         );
 
         window.addEventListener(
@@ -1606,17 +2599,6 @@ export default definePlugin({
             onWindowBlur
         );
 
-        /*
-         * Discord frequently destroys/recreates/reparents video elements
-         * when switching between:
-         *
-         * - normal call grid
-         * - focused camera
-         * - stage
-         * - fullscreen
-         *
-         * Rescan whenever that happens.
-         */
         observer =
             new MutationObserver(
                 scheduleVideoScan
@@ -1625,8 +2607,11 @@ export default definePlugin({
         observer.observe(
             document.body,
             {
-                childList: true,
-                subtree: true
+                childList:
+                    true,
+
+                subtree:
+                    true
             }
         );
 
@@ -1634,6 +2619,8 @@ export default definePlugin({
     },
 
     stop() {
+        closeCustomFullscreen();
+
         document.removeEventListener(
             "wheel",
             onWheel
@@ -1677,39 +2664,53 @@ export default definePlugin({
             true
         );
 
+        document.removeEventListener(
+            "keydown",
+            onKeyDown,
+            true
+        );
+
+        document.removeEventListener(
+            "fullscreenchange",
+            onFullscreenChange
+        );
+
         window.removeEventListener(
             "blur",
             onWindowBlur
         );
 
         observer?.disconnect();
-        observer = null;
+
+        observer =
+            null;
 
         if (
-            scanFrame !== null
+            scanFrame !==
+            null
         ) {
             cancelAnimationFrame(
                 scanFrame
             );
 
-            scanFrame = null;
+            scanFrame =
+                null;
         }
 
-        dragState = null;
+        dragState =
+            null;
 
         suppressedClicks.clear();
         savedStates.clear();
 
-        /*
-         * Restore every Discord element exactly to its original inline
-         * styling when the plugin is disabled.
-         */
         for (
             const video of
             [...activeVideos]
         ) {
             const state =
-                states.get(video);
+                states.get(
+                    video
+                );
 
             if (state) {
                 restoreElement(
