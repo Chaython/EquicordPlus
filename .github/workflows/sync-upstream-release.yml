@@ -6,7 +6,6 @@ on:
       - main
 
   schedule:
-    # Check the parent twice per hour.
     - cron: "17,47 * * * *"
 
   workflow_dispatch:
@@ -25,14 +24,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sync-upstream:
-    name: Merge Equicord upstream
-    if: github.event_name != 'push'
+  sync-build-release:
+    name: Sync, build and release
     runs-on: ubuntu-latest
-
-    outputs:
-      changed: ${{ steps.merge.outputs.changed }}
-      sha: ${{ steps.merge.outputs.sha }}
 
     steps:
       - name: Checkout EquicordPlus
@@ -41,8 +35,9 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Merge Equicord/Equicord main
-        id: merge
+      - name: Merge Equicord upstream
+        id: sync
+        if: github.event_name != 'push'
         shell: bash
         run: |
           set -euo pipefail
@@ -58,7 +53,6 @@ jobs:
           if git merge-base --is-ancestor upstream/main HEAD; then
             echo "Fork already contains the latest parent commits."
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "sha=$BEFORE" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -73,7 +67,9 @@ jobs:
               echo
               echo "No changes were pushed. Conflicting files:"
               echo
-              git diff --name-only --diff-filter=U | sed 's/^/- `/' | sed 's/$/`/'
+              git diff --name-only --diff-filter=U |
+                sed 's/^/- `/' |
+                sed 's/$/`/'
             } >> "$GITHUB_STEP_SUMMARY"
 
             git merge --abort
@@ -86,14 +82,12 @@ jobs:
 
           if [ "$BEFORE" = "$AFTER" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "sha=$AFTER" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           git push origin HEAD:main
 
           echo "changed=true" >> "$GITHUB_OUTPUT"
-          echo "sha=$AFTER" >> "$GITHUB_OUTPUT"
 
           {
             echo "## Upstream merged"
@@ -103,45 +97,52 @@ jobs:
             echo "New commit: \`$AFTER\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  build-release:
-    name: Build and publish release
-    needs:
-      - sync-upstream
+      - name: Decide whether to build
+        id: gate
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SYNC_CHANGED: ${{ steps.sync.outputs.changed }}
+          FORCE_RELEASE: ${{ github.event.inputs.force_release || 'false' }}
+        run: |
+          set -euo pipefail
 
-    if: >-
-      always() &&
-      needs.sync-upstream.result != 'failure' &&
-      (
-        github.event_name == 'push' ||
-        needs.sync-upstream.outputs.changed == 'true' ||
-        inputs.force_release == true
-      )
+          BUILD=false
 
-    runs-on: ubuntu-latest
+          if [ "$EVENT_NAME" = "push" ]; then
+            BUILD=true
+          elif [ "$SYNC_CHANGED" = "true" ]; then
+            BUILD=true
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && \
+               [ "$FORCE_RELEASE" = "true" ]; then
+            BUILD=true
+          fi
 
-    steps:
-      - name: Checkout latest main
-        uses: actions/checkout@v7
-        with:
-          ref: main
-          fetch-depth: 0
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "Build required: $BUILD"
 
       - name: Setup PNPM and Node
-        uses: pnpm/setup@v2.1.0
+        if: steps.gate.outputs.build == 'true'
+        uses: pnpm/setup@v3
         with:
-          runtime: node@v24
+          runtime: node@24
           require-lockfile: true
+          install: false
 
       - name: Install dependencies
+        if: steps.gate.outputs.build == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Build
+        if: steps.gate.outputs.build == 'true'
         run: pnpm build
 
       - name: Build web
+        if: steps.gate.outputs.build == 'true'
         run: pnpm buildWeb
 
       - name: Collect release files
+        if: steps.gate.outputs.build == 'true'
         id: release
         shell: bash
         run: |
@@ -156,12 +157,10 @@ jobs:
 
           mkdir -p release
 
-          # Include directly generated archives / ASARs when present.
           find dist -maxdepth 1 -type f \
             \( -name '*.zip' -o -name '*.asar' \) \
             -exec cp -f {} release/ \;
 
-          # Browser userscript outputs.
           if [ -d dist/browser ]; then
             find dist/browser -maxdepth 1 -type f \
               -name 'browser.*' \
@@ -172,10 +171,10 @@ jobs:
             -name 'Equicord.user.*' \
             -exec cp -f {} release/ \;
 
-          # Also preserve the complete output from pnpm build + pnpm buildWeb.
           (
             cd dist
-            zip -9 -r "../release/EquicordPlus-dist-v${VERSION}-${SHORT_SHA}.zip" .
+            zip -9 -r \
+              "../release/EquicordPlus-dist-v${VERSION}-${SHORT_SHA}.zip" .
           )
 
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
@@ -183,27 +182,14 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-          {
-            echo "## Release build"
-            echo
-            echo "- Version: \`$VERSION\`"
-            echo "- Commit: \`$SHA\`"
-            echo "- Tag: \`$TAG\`"
-            echo
-            echo "Commands:"
-            echo "- \`pnpm install --frozen-lockfile\`"
-            echo "- \`pnpm build\`"
-            echo "- \`pnpm buildWeb\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
       - name: Create GitHub release
+        if: steps.gate.outputs.build == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag }}
           SHA: ${{ steps.release.outputs.sha }}
           VERSION: ${{ steps.release.outputs.version }}
           SHORT_SHA: ${{ steps.release.outputs.short_sha }}
-
         shell: bash
         run: |
           set -euo pipefail
