@@ -1,0 +1,218 @@
+name: Sync Upstream and Build Release
+
+on:
+  push:
+    branches:
+      - main
+
+  schedule:
+    # Check the parent twice per hour.
+    - cron: "17,47 * * * *"
+
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: "Build a release even when upstream has no new commits"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: equicordplus-sync-release
+  cancel-in-progress: false
+
+jobs:
+  sync-upstream:
+    name: Merge Equicord upstream
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+
+    outputs:
+      changed: ${{ steps.merge.outputs.changed }}
+      sha: ${{ steps.merge.outputs.sha }}
+
+    steps:
+      - name: Checkout EquicordPlus
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge Equicord/Equicord main
+        id: merge
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote add upstream https://github.com/Equicord/Equicord.git
+          git fetch --no-tags upstream main
+
+          BEFORE="$(git rev-parse HEAD)"
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Fork already contains the latest parent commits."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "sha=$BEFORE" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          set +e
+          git merge --no-edit upstream/main
+          MERGE_STATUS=$?
+          set -e
+
+          if [ "$MERGE_STATUS" -ne 0 ]; then
+            {
+              echo "## Upstream merge conflict"
+              echo
+              echo "No changes were pushed. Conflicting files:"
+              echo
+              git diff --name-only --diff-filter=U | sed 's/^/- `/' | sed 's/$/`/'
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            git merge --abort
+
+            echo "::error::Equicord upstream could not be merged automatically because of conflicts."
+            exit 1
+          fi
+
+          AFTER="$(git rev-parse HEAD)"
+
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "sha=$AFTER" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git push origin HEAD:main
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "sha=$AFTER" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Upstream merged"
+            echo
+            echo "Merged Equicord/Equicord main into Chaython/EquicordPlus main."
+            echo
+            echo "New commit: \`$AFTER\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-release:
+    name: Build and publish release
+    needs:
+      - sync-upstream
+
+    if: >-
+      always() &&
+      needs.sync-upstream.result != 'failure' &&
+      (
+        github.event_name == 'push' ||
+        needs.sync-upstream.outputs.changed == 'true' ||
+        inputs.force_release == true
+      )
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout latest main
+        uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup PNPM and Node
+        uses: pnpm/setup@v2.1.0
+        with:
+          runtime: node@v24
+          require-lockfile: true
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Build web
+        run: pnpm buildWeb
+
+      - name: Collect release files
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -d dist
+
+          SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="$(git rev-parse --short=8 HEAD)"
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="build-v${VERSION}-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
+
+          mkdir -p release
+
+          # Include directly generated archives / ASARs when present.
+          find dist -maxdepth 1 -type f \
+            \( -name '*.zip' -o -name '*.asar' \) \
+            -exec cp -f {} release/ \;
+
+          # Browser userscript outputs.
+          if [ -d dist/browser ]; then
+            find dist/browser -maxdepth 1 -type f \
+              -name 'browser.*' \
+              -exec cp -f {} release/ \;
+          fi
+
+          find dist -maxdepth 1 -type f \
+            -name 'Equicord.user.*' \
+            -exec cp -f {} release/ \;
+
+          # Also preserve the complete output from pnpm build + pnpm buildWeb.
+          (
+            cd dist
+            zip -9 -r "../release/EquicordPlus-dist-v${VERSION}-${SHORT_SHA}.zip" .
+          )
+
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Release build"
+            echo
+            echo "- Version: \`$VERSION\`"
+            echo "- Commit: \`$SHA\`"
+            echo "- Tag: \`$TAG\`"
+            echo
+            echo "Commands:"
+            echo "- \`pnpm install --frozen-lockfile\`"
+            echo "- \`pnpm build\`"
+            echo "- \`pnpm buildWeb\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+          SHA: ${{ steps.release.outputs.sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+          SHORT_SHA: ${{ steps.release.outputs.short_sha }}
+
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --clobber
+          else
+            gh release create "$TAG" release/* \
+              --target "$SHA" \
+              --title "EquicordPlus v${VERSION} (${SHORT_SHA})" \
+              --notes "Automated EquicordPlus build from commit \`${SHA}\`. Built with \`pnpm build\` and \`pnpm buildWeb\`."
+          fi
