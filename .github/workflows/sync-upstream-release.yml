@@ -4,8 +4,11 @@ on:
   push:
     branches:
       - main
+
   schedule:
+    # Check Equicord upstream twice per hour.
     - cron: "17,47 * * * *"
+
   workflow_dispatch:
     inputs:
       force_release:
@@ -27,11 +30,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ------------------------------------------------------------
+      # Checkout
+      # ------------------------------------------------------------
+
       - name: Checkout EquicordPlus
         uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
+
+      # ------------------------------------------------------------
+      # Sync parent fork
+      # Only runs for scheduled/manual runs.
+      # Normal pushes skip this step.
+      # ------------------------------------------------------------
 
       - name: Merge Equicord upstream
         id: sync
@@ -39,7 +52,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          set -x # Enable verbose logging for debugging
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -49,22 +61,35 @@ jobs:
 
           BEFORE="$(git rev-parse HEAD)"
 
+          echo "Current EquicordPlus commit: $BEFORE"
+          echo "Current Equicord upstream: $(git rev-parse upstream/main)"
+
+          # Nothing to do if the fork already contains upstream.
           if git merge-base --is-ancestor upstream/main HEAD; then
-            echo "Fork already contains the latest parent commits."
+            echo "Fork already contains the latest Equicord commits."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
+          echo "New upstream commits found."
+          echo "Attempting automatic merge..."
+
+          # Temporarily disable immediate exit so we can detect
+          # and cleanly report a merge conflict.
           set +e
           git merge --no-edit upstream/main
           MERGE_STATUS=$?
           set -e
 
           if [ "$MERGE_STATUS" -ne 0 ]; then
+            echo "::error::Equicord upstream could not be merged automatically."
+
             {
               echo "## Upstream merge conflict"
               echo
-              echo "No changes were pushed. Conflicting files:"
+              echo "The automatic merge was aborted and nothing was pushed."
+              echo
+              echo "Conflicting files:"
               echo
               git diff --name-only --diff-filter=U |
                 sed 's/^/- `/' |
@@ -72,29 +97,35 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY"
 
             git merge --abort
-
-            echo "::error::Equicord upstream could not be merged automatically because of conflicts."
             exit 1
           fi
 
           AFTER="$(git rev-parse HEAD)"
 
           if [ "$BEFORE" = "$AFTER" ]; then
+            echo "Merge produced no changes."
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+
+          echo "Merge succeeded."
+          echo "New commit: $AFTER"
 
           git push origin HEAD:main
 
           echo "changed=true" >> "$GITHUB_OUTPUT"
 
           {
-            echo "## Upstream merged"
+            echo "## Upstream sync successful"
             echo
-            echo "Merged Equicord/Equicord main into Chaython/EquicordPlus main."
+            echo "Merged \`Equicord/Equicord:main\` into \`Chaython/EquicordPlus:main\`."
             echo
             echo "New commit: \`$AFTER\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # ------------------------------------------------------------
+      # Decide whether a build is necessary
+      # ------------------------------------------------------------
 
       - name: Decide whether to build
         id: gate
@@ -108,17 +139,35 @@ jobs:
 
           BUILD=false
 
+          # Always build normal pushes to main.
           if [ "$EVENT_NAME" = "push" ]; then
             BUILD=true
+
+          # Build when the scheduled upstream sync changed main.
           elif [ "$SYNC_CHANGED" = "true" ]; then
             BUILD=true
-          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && \
+
+          # Allow a manually forced build.
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] &&
                [ "$FORCE_RELEASE" = "true" ]; then
             BUILD=true
           fi
 
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
           echo "Build required: $BUILD"
+
+          {
+            echo "## Build decision"
+            echo
+            echo "- Event: \`$EVENT_NAME\`"
+            echo "- Upstream changed: \`${SYNC_CHANGED:-false}\`"
+            echo "- Force release: \`$FORCE_RELEASE\`"
+            echo "- Build: \`$BUILD\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ------------------------------------------------------------
+      # pnpm / Node
+      # ------------------------------------------------------------
 
       - name: Install pnpm
         if: steps.gate.outputs.build == 'true'
@@ -129,25 +178,27 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: 'pnpm'
+          cache: pnpm
+
+      # ------------------------------------------------------------
+      # Build
+      # ------------------------------------------------------------
 
       - name: Install dependencies
         if: steps.gate.outputs.build == 'true'
-        run: |
-          set -x
-          pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
 
       - name: Build
         if: steps.gate.outputs.build == 'true'
-        run: |
-          set -x
-          pnpm build
+        run: pnpm build
 
       - name: Build web
         if: steps.gate.outputs.build == 'true'
-        run: |
-          set -x
-          pnpm buildWeb
+        run: pnpm buildWeb
+
+      # ------------------------------------------------------------
+      # Prepare release files
+      # ------------------------------------------------------------
 
       - name: Collect release files
         if: steps.gate.outputs.build == 'true'
@@ -155,69 +206,150 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          set -x
 
           if [ ! -d "dist" ]; then
-            echo "::error::The 'dist' directory was not found. Build steps may have failed or output to a different location."
+            echo "::error::The dist directory was not created."
             exit 1
           fi
 
           SHA="$(git rev-parse HEAD)"
           SHORT_SHA="$(git rev-parse --short=8 HEAD)"
           VERSION="$(node -p "require('./package.json').version")"
+
           TAG="build-v${VERSION}-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
 
+          rm -rf release
           mkdir -p release
 
+          # --------------------------------------------------------
+          # Main packaged outputs
+          # --------------------------------------------------------
+
           find dist -maxdepth 1 -type f \
-            \(-name '*.zip' -o -name '*.asar'\) \
+            \( -name '*.zip' -o -name '*.asar' \) \
             -exec cp -f {} release/ \;
 
-          if [ -d dist/browser ]; then
+          # --------------------------------------------------------
+          # Browser build files
+          # --------------------------------------------------------
+
+          if [ -d "dist/browser" ]; then
             find dist/browser -maxdepth 1 -type f \
               -name 'browser.*' \
               -exec cp -f {} release/ \;
           fi
 
+          # --------------------------------------------------------
+          # Userscript build files
+          # --------------------------------------------------------
+
           find dist -maxdepth 1 -type f \
             -name 'Equicord.user.*' \
             -exec cp -f {} release/ \;
 
+          # --------------------------------------------------------
+          # Complete dist archive
+          # This ensures nothing from pnpm build / buildWeb is lost.
+          # --------------------------------------------------------
+
           (
             cd dist
+
             zip -9 -r \
-              "../release/EquicordPlus-dist-v${VERSION}-${SHORT_SHA}.zip" .
+              "../release/EquicordPlus-dist-v${VERSION}-${SHORT_SHA}.zip" \
+              .
           )
 
+          # --------------------------------------------------------
+          # Verify release output
+          # --------------------------------------------------------
+
           if [ -z "$(ls -A release)" ]; then
-            echo "::error::No files were copied into the release directory."
+            echo "::error::No release files were generated."
             exit 1
           fi
+
+          echo
+          echo "Release files:"
+          ls -lh release/
 
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
+          {
+            echo "## Build completed"
+            echo
+            echo "- Version: \`$VERSION\`"
+            echo "- Commit: \`$SHA\`"
+            echo "- Tag: \`$TAG\`"
+            echo
+            echo "### Release files"
+            echo
+            for file in release/*; do
+              echo "- \`$(basename "$file")\`"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ------------------------------------------------------------
+      # GitHub Release
+      # ------------------------------------------------------------
+
       - name: Create GitHub release
         if: steps.gate.outputs.build == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+
+          # Force gh to operate on the fork, not Equicord/Equicord.
+          GH_REPO: Chaython/EquicordPlus
+
           TAG: ${{ steps.release.outputs.tag }}
           SHA: ${{ steps.release.outputs.sha }}
           VERSION: ${{ steps.release.outputs.version }}
           SHORT_SHA: ${{ steps.release.outputs.short_sha }}
+
         shell: bash
         run: |
           set -euo pipefail
-          set -x
 
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" release/* --clobber
+          echo "Repository: $GH_REPO"
+          echo "Release tag: $TAG"
+          echo "Target commit: $SHA"
+
+          if gh release view "$TAG" \
+            --repo "$GH_REPO" \
+            >/dev/null 2>&1; then
+
+            echo "Release already exists. Updating assets..."
+
+            gh release upload "$TAG" \
+              release/* \
+              --repo "$GH_REPO" \
+              --clobber
+
           else
-            gh release create "$TAG" release/* \
+
+            echo "Creating release..."
+
+            gh release create "$TAG" \
+              release/* \
+              --repo "$GH_REPO" \
               --target "$SHA" \
               --title "EquicordPlus v${VERSION} (${SHORT_SHA})" \
-              --notes "Automated EquicordPlus build from commit \`${SHA}\`. Built with \`pnpm build\` and \`pnpm buildWeb\`."
+              --notes "Automated EquicordPlus build from commit \`${SHA}\`.
+
+          Build commands:
+          - \`pnpm install --frozen-lockfile\`
+          - \`pnpm build\`
+          - \`pnpm buildWeb\`"
           fi
+
+          {
+            echo
+            echo "## GitHub release published"
+            echo
+            echo "Repository: \`$GH_REPO\`"
+            echo
+            echo "Tag: \`$TAG\`"
+          } >> "$GITHUB_STEP_SUMMARY"
