@@ -4,10 +4,8 @@ on:
   push:
     branches:
       - main
-
   schedule:
     - cron: "17,47 * * * *"
-
   workflow_dispatch:
     inputs:
       force_release:
@@ -30,7 +28,7 @@ jobs:
 
     steps:
       - name: Checkout EquicordPlus
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
@@ -121,13 +119,18 @@ jobs:
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
           echo "Build required: $BUILD"
 
-      - name: Setup PNPM and Node
+      - name: Install pnpm
         if: steps.gate.outputs.build == 'true'
-        uses: pnpm/setup@v3
+        uses: pnpm/action-setup@v4
         with:
-          runtime: node@24
-          require-lockfile: true
-          install: false
+          version: 9
+
+      - name: Setup Node
+        if: steps.gate.outputs.build == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
 
       - name: Install dependencies
         if: steps.gate.outputs.build == 'true'
@@ -158,7 +161,7 @@ jobs:
           mkdir -p release
 
           find dist -maxdepth 1 -type f \
-            \( -name '*.zip' -o -name '*.asar' \) \
+            \(-name '*.zip' -o -name '*.asar'\) \
             -exec cp -f {} release/ \;
 
           if [ -d dist/browser ]; then
@@ -182,7 +185,7 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
-        - name: Create GitHub release
+      - name: Create GitHub release
         if: steps.gate.outputs.build == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
