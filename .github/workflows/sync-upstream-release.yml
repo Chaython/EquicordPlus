@@ -39,6 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set -x # Enable verbose logging for debugging
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -122,7 +123,6 @@ jobs:
       - name: Install pnpm
         if: steps.gate.outputs.build == 'true'
         uses: pnpm/action-setup@v4
-        # Version parameter removed so it reads packageManager from package.json
 
       - name: Setup Node
         if: steps.gate.outputs.build == 'true'
@@ -133,15 +133,21 @@ jobs:
 
       - name: Install dependencies
         if: steps.gate.outputs.build == 'true'
-        run: pnpm install --frozen-lockfile
+        run: |
+          set -x
+          pnpm install --frozen-lockfile
 
       - name: Build
         if: steps.gate.outputs.build == 'true'
-        run: pnpm build
+        run: |
+          set -x
+          pnpm build
 
       - name: Build web
         if: steps.gate.outputs.build == 'true'
-        run: pnpm buildWeb
+        run: |
+          set -x
+          pnpm buildWeb
 
       - name: Collect release files
         if: steps.gate.outputs.build == 'true'
@@ -149,8 +155,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set -x
 
-          test -d dist
+          if [ ! -d "dist" ]; then
+            echo "::error::The 'dist' directory was not found. Build steps may have failed or output to a different location."
+            exit 1
+          fi
 
           SHA="$(git rev-parse HEAD)"
           SHORT_SHA="$(git rev-parse --short=8 HEAD)"
@@ -179,6 +189,11 @@ jobs:
               "../release/EquicordPlus-dist-v${VERSION}-${SHORT_SHA}.zip" .
           )
 
+          if [ -z "$(ls -A release)" ]; then
+            echo "::error::No files were copied into the release directory."
+            exit 1
+          fi
+
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
           echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -196,6 +211,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          set -x
 
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release/* --clobber
