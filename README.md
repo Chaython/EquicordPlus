@@ -1,66 +1,64 @@
-# [<img src="./browser/icon.png" width="40" align="left" alt="Equicord">](https://github.com/Equicord/Equicord) Equicord
+# EquicordPlus
 
-[![Equibop](https://img.shields.io/badge/Equibop-grey?style=flat)](https://github.com/Equicord/Equibop)
-[![Tests](https://github.com/Equicord/Equicord/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/Equicord/Equicord/actions/workflows/test.yml)
-[![Discord](https://img.shields.io/discord/1173279886065029291.svg?color=768AD4&label=Discord&logo=discord&logoColor=white)](https://equicord.org/discord)
+[![Build](https://github.com/Chaython/EquicordPlus/actions/workflows/sync-upstream-release.yml/badge.svg?branch=main)](https://github.com/Chaython/EquicordPlus/actions/workflows/sync-upstream-release.yml)
+[![Releases](https://img.shields.io/github/v/release/Chaython/EquicordPlus?include_prereleases&label=release)](https://github.com/Chaython/EquicordPlus/releases)
+[![License](https://img.shields.io/github/license/Chaython/EquicordPlus)](LICENSE)
 
-Equicord is a fork of [Vencord](https://github.com/Vendicated/Vencord), with over 300+ plugins.
+**EquicordPlus** is an extended fork of [Equicord](https://github.com/Equicord/Equicord) maintained at **[Chaython/EquicordPlus](https://github.com/Chaython/EquicordPlus)**.
 
-You can join our [Discord server](https://equicord.org/discord) for commits, changes, chatting, or even support.
+It keeps Equicord's existing plugin ecosystem while adding extra bundled user plugins, custom behavior, and automated upstream syncing/builds. The fork periodically pulls compatible changes from `Equicord/Equicord:main` while retaining EquicordPlus-specific files and additions.
 
-### Included Plugins
+## Downloads
 
-Our included plugins can be found [here](https://equicord.org/plugins).
+Automated EquicordPlus builds are published on the repository's **[Releases page](https://github.com/Chaython/EquicordPlus/releases)**.
 
-## Installing / Uninstalling
+The release workflow builds desktop and web/extension artifacts from this fork. TypeScript and lint diagnostics are also reported by CI.
 
-Windows
+## EquicordPlus extras
 
-- [GUI](https://github.com/Equicord/Equilotl/releases/latest/download/Equilotl.exe)
-- [CLI](https://github.com/Equicord/Equilotl/releases/latest/download/EquilotlCli.exe)
+EquicordPlus currently includes the following extra user plugins under [`src/userplugins`](src/userplugins):
 
-MacOS
+| Plugin | What it adds |
+| --- | --- |
+| [FakeMuteDeafenCamera](src/userplugins/FakeMuteDeafenCamera) | Fake mute, deafen, and camera-state controls with configurable button behavior. |
+| [AllConnectionsEnabled](src/userplugins/allConnectionsEnabled) | Enables all connection types exposed by Discord. |
+| [AutoDeleteDMs](src/userplugins/autoDeleteDms) | Automatically deletes DMs after a configurable amount of time. |
+| [AutoUnmute](src/userplugins/autoUnmute) | Automatically unmutes/undeafens after server mute/deafen when permissions allow it. |
+| [BigFileUpload](src/userplugins/bigFileUpload) | Sends oversized files through supported external upload providers from drag/drop, paste, or the upload button. |
+| [MessageCleaner](src/userplugins/messageCleaner) | Bulk message cleanup with rate-limit handling, statistics, and confirmation. |
+| [PasswordManager](src/userplugins/passwordManager) | Adds an in-client password-management vault. |
+| [SendToAllDMs](src/userplugins/sendtoalldms) | Adds a command for sending a message to multiple friend DMs with blacklist/whitelist controls. This can carry account-enforcement risk if abused. |
+| [SpoofSystemV2](src/userplugins/spoofmsgv2) | Locally creates realistic Discord-style system-message spoofs. |
+| [TokenLoginManager](src/userplugins/tokenLogin) | Saves/manages account tokens and provides token-based login. Treat stored tokens as highly sensitive credentials. |
+| [BetterActivities](src/userplugins/vc-betterActivities) | Adds activity icons to the member list and can show all detected activities. |
+| [BlockKrisp](src/userplugins/vc-blockKrisp) | Prevents Krisp from loading. |
+| [FollowUser](src/userplugins/vc-followUser) | Adds a user-context action for following a user between voice channels. |
+| [IgnoreTerms](src/userplugins/vc-ignoreTerms) | Suppresses Discord's newer terms prompt/handling used by the plugin. |
+| [NotifyUserChanges](src/userplugins/vc-notifyUserChanges) | Adds notifications for selected users' voice-channel and online-status changes. |
+| [SilentTyping](src/userplugins/vc-silentTypingEnhanced) | Hides your typing indicator. |
+| [WebcamZoom](src/userplugins/webcamZoom) | Adds aspect-correct webcams, mouse-wheel zoom, drag panning, remembered views, and custom/native fullscreen camera viewing. |
 
-- [Universal GUI](https://github.com/Equicord/Equilotl/releases/latest/download/Equilotl.dmg)
-- [X64 GUI](https://github.com/Equicord/Equilotl/releases/latest/download/Equilotl-x64.dmg)
-- [ARM64 GUI](https://github.com/Equicord/Equilotl/releases/latest/download/Equilotl-arm64.dmg)
-- [Universal CLI](https://github.com/Equicord/Equilotl/releases/latest/download/EquilotlCli-universal)
-- [X64 CLI](https://github.com/Equicord/Equilotl/releases/latest/download/EquilotlCli-x64)
-- [ARM64 CLI](https://github.com/Equicord/Equilotl/releases/latest/download/EquilotlCli-arm64)
+These are in addition to the plugins inherited from Equicord.
 
-The CLI builds are plain binaries, so run `chmod +x <file>` after downloading.
+## Build EquicordPlus from source
 
-Linux
+### Requirements
 
-- [GUI](https://github.com/Equicord/Equilotl/releases/latest/download/Equilotl-x11)
-- [CLI](https://github.com/Equicord/Equilotl/releases/latest/download/EquilotlCli-Linux)
-- [AUR](https://aur.archlinux.org/packages?O=0&K=equicord)
+- [Git](https://git-scm.com/download)
+- Node.js **22 or newer**
+- pnpm
+
+Install pnpm if needed:
 
 ```shell
-bash -c "$(curl -sS https://raw.githubusercontent.com/Equicord/Equilotl/refs/heads/main/install.sh)"
+npm install -g pnpm@12.4.2
 ```
 
-## Installing Equicord Devbuild
-
-### Dependencies
-
-[Git](https://git-scm.com/download) and [Node.JS LTS](https://nodejs.dev/en/) are required.
-
-Install `pnpm`:
-
-> :exclamation: This next command may need to be run as admin/root depending on your system, and you may need to close and reopen your terminal for pnpm to be in your PATH.
+Clone **this repository**:
 
 ```shell
-npm i -g pnpm
-```
-
-> :exclamation: **IMPORTANT** Make sure you aren't using an admin/root terminal from here onwards. It **will** mess up your Discord/Equicord instance and you **will** most likely have to reinstall.
-
-Clone Equicord:
-
-```shell
-git clone https://github.com/Equicord/Equicord
-cd Equicord
+git clone https://github.com/Chaython/EquicordPlus.git
+cd EquicordPlus
 ```
 
 Install dependencies:
@@ -69,57 +67,113 @@ Install dependencies:
 pnpm install --frozen-lockfile
 ```
 
-Build Equicord:
+Build the desktop version:
 
 ```shell
 pnpm build
 ```
 
-Inject Equicord into your desktop client:
+Inject EquicordPlus into the supported Discord desktop client:
 
 ```shell
 pnpm inject
 ```
 
-Build Equicord for web:
+Remove the injection:
+
+```shell
+pnpm uninject
+```
+
+Repair an existing injection:
+
+```shell
+pnpm repair
+```
+
+Build the web/browser version:
 
 ```shell
 pnpm buildWeb
 ```
 
-After building Equicord's web extension, locate the appropriate ZIP file in the `dist` directory and follow your browser’s guide for installing custom extensions, if supported.
+Build standalone desktop and web artifacts:
 
-Note: Firefox extension zip requires Firefox for developers
+```shell
+pnpm buildStandalone
+pnpm buildWebStandalone
+```
+
+Generated artifacts are placed under `dist`.
+
+## Updating a local checkout
+
+```shell
+cd EquicordPlus
+git pull origin main
+pnpm install --frozen-lockfile
+pnpm build
+pnpm inject
+```
+
+For web builds:
+
+```shell
+git pull origin main
+pnpm install --frozen-lockfile
+pnpm buildWeb
+```
+
+## Development commands
+
+Run TypeScript diagnostics:
+
+```shell
+pnpm testTsc
+```
+
+Run the linter without modifying source:
+
+```shell
+pnpm lint
+```
+
+Run the complete repository test command:
+
+```shell
+pnpm test
+```
+
+Watch/rebuild the desktop client during development:
+
+```shell
+pnpm dev
+```
+
+Watch the web build:
+
+```shell
+pnpm watchWeb
+```
+
+## Upstream sync
+
+EquicordPlus tracks [Equicord/Equicord](https://github.com/Equicord/Equicord). The repository's [sync/build workflow](.github/workflows/sync-upstream-release.yml) checks upstream automatically and attempts to merge compatible upstream changes.
+
+The EquicordPlus README is intentionally fork-owned. Automated upstream merges are configured to keep this repository's `README.md` instead of allowing upstream README edits to create a merge conflict. Other conflicts are still surfaced normally and are **not** automatically discarded.
 
 ## Credits
 
-Thank you to [Vendicated](https://github.com/Vendicated) for creating [Vencord](https://github.com/Vendicated/Vencord) & [Suncord](https://github.com/verticalsync/Suncord) by [verticalsync](https://github.com/verticalsync) for helping when needed.
+EquicordPlus is based on [Equicord](https://github.com/Equicord/Equicord), which is based on [Vencord](https://github.com/Vendicated/Vencord).
 
-## Star History
+Thanks to the Equicord and Vencord contributors whose work forms the base of this fork, and to the authors of user plugins incorporated or adapted in EquicordPlus.
 
-<a href="https://star-history.com/#Equicord/Equicord&Timeline">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Equicord/Equicord&type=Timeline&theme=dark&sealed_token=64drv2U7WiV6dQ5VRbOZdxHT3mRzxUzhVvfm5qt1VRpGjVPje0PbObjibX2FYe4zd-h36lCAGZ873gAgb_5_tAzUBixUVbtaLHqy1fNH6PkQP_PqPdKztatlI2s17T9IUFzRyhYynmJ1-H4idFFzEAMN1gRZlVvvmJ71P0LovJPOIqTT7uHIubWcHzxC" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Equicord/Equicord&type=Timeline&sealed_token=64drv2U7WiV6dQ5VRbOZdxHT3mRzxUzhVvfm5qt1VRpGjVPje0PbObjibX2FYe4zd-h36lCAGZ873gAgb_5_tAzUBixUVbtaLHqy1fNH6PkQP_PqPdKztatlI2s17T9IUFzRyhYynmJ1-H4idFFzEAMN1gRZlVvvmJ71P0LovJPOIqTT7uHIubWcHzxC" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Equicord/Equicord&type=Timeline&sealed_token=64drv2U7WiV6dQ5VRbOZdxHT3mRzxUzhVvfm5qt1VRpGjVPje0PbObjibX2FYe4zd-h36lCAGZ873gAgb_5_tAzUBixUVbtaLHqy1fNH6PkQP_PqPdKztatlI2s17T9IUFzRyhYynmJ1-H4idFFzEAMN1gRZlVvvmJ71P0LovJPOIqTT7uHIubWcHzxC" />
-  </picture>
-</a>
+## License
+
+EquicordPlus follows the repository's [GPL-3.0-or-later license](LICENSE).
 
 ## Disclaimer
 
-Discord is trademark of Discord Inc., and solely mentioned for the sake of descriptivity.
-Mentioning it does not imply any affiliation with or endorsement by Discord Inc.
-Vencord is not connected to Equicord and as such, all donation links go to Vendicated's donation link.
+Discord is a trademark of Discord Inc. EquicordPlus is not affiliated with or endorsed by Discord Inc.
 
-<details>
-<summary>Using Equicord violates Discord's terms of service</summary>
-
-Client modifications are against Discord’s Terms of Service.
-
-However, Discord is pretty indifferent about them and there are no known cases of users getting banned for using client mods! So you should generally be fine if you don’t use plugins that implement abusive behaviour. But no worries, all inbuilt plugins are safe to use!
-
-Regardless, if your account is essential to you and getting disabled would be a disaster for you, you should probably not use any client mods (not exclusive to Equicord), just to be safe.
-
-Additionally, make sure not to post screenshots with Equicord in a server where you might get banned for it.
-
-</details>
+Client modifications can violate Discord's Terms of Service. Plugins that automate user actions, bulk-message users, manage account tokens, or alter client behavior can carry additional account or security risk. Review what a plugin does before enabling it, especially on accounts you cannot afford to lose.

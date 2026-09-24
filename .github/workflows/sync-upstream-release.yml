@@ -46,6 +46,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          # README.md is fork-owned (see .gitattributes). Keep the
+          # EquicordPlus README whenever upstream changes its own README.
+          git config merge.equicordplus-readme.name "Keep EquicordPlus README"
+          git config merge.equicordplus-readme.driver true
+
           git remote add upstream https://github.com/Equicord/Equicord.git
           git fetch --no-tags upstream main
 
