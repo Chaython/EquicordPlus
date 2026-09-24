@@ -30,12 +30,9 @@ EquicordPlus currently includes the following extra user plugins under [`src/use
 | [SendToAllDMs](src/userplugins/sendtoalldms) | Adds a command for sending a message to multiple friend DMs with blacklist/whitelist controls. This can carry account-enforcement risk if abused. |
 | [SpoofSystemV2](src/userplugins/spoofmsgv2) | Locally creates realistic Discord-style system-message spoofs. |
 | [TokenLoginManager](src/userplugins/tokenLogin) | Saves/manages account tokens and provides token-based login. Treat stored tokens as highly sensitive credentials. |
-| [BetterActivities](src/userplugins/vc-betterActivities) | Adds activity icons to the member list and can show all detected activities. |
-| [BlockKrisp](src/userplugins/vc-blockKrisp) | Prevents Krisp from loading. |
 | [FollowUser](src/userplugins/vc-followUser) | Adds a user-context action for following a user between voice channels. |
 | [IgnoreTerms](src/userplugins/vc-ignoreTerms) | Suppresses Discord's newer terms prompt/handling used by the plugin. |
 | [NotifyUserChanges](src/userplugins/vc-notifyUserChanges) | Adds notifications for selected users' voice-channel and online-status changes. |
-| [SilentTyping](src/userplugins/vc-silentTypingEnhanced) | Hides your typing indicator. |
 | [WebcamZoom](src/userplugins/webcamZoom) | Adds aspect-correct webcams, mouse-wheel zoom, drag panning, remembered views, and custom/native fullscreen camera viewing. |
 
 These are in addition to the plugins inherited from Equicord.
