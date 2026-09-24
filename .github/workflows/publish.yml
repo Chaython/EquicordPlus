@@ -12,6 +12,7 @@ permissions:
 
 jobs:
     release:
+        if: github.repository == 'Equicord/Equicord'
         runs-on: ubuntu-latest
 
         steps:

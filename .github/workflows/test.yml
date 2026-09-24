@@ -11,6 +11,7 @@ on:
 
 jobs:
     Test:
+        if: github.repository == 'Equicord/Equicord' || github.event_name == 'pull_request' || github.ref_name != 'main'
         name: Test
         runs-on: ubuntu-latest
 

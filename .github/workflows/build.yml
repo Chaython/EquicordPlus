@@ -15,6 +15,7 @@ permissions:
 
 jobs:
     Build:
+        if: github.repository == 'Equicord/Equicord'
         name: Build Equicord
         runs-on: ubuntu-latest
 
