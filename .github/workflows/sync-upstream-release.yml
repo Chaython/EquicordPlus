@@ -6,8 +6,8 @@ on:
       - main
 
   schedule:
-    # Check Equicord upstream twice per hour.
-    - cron: "17,47 * * * *"
+    # Check Equicord upstream every 6 hours.
+    - cron: "17 */6 * * *"
 
   workflow_dispatch:
     inputs:
