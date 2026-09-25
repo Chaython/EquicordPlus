@@ -84,8 +84,8 @@ jobs:
               echo "Conflicting files:"
               echo
               git diff --name-only --diff-filter=U |
-                sed 's/^/- `/' |
-                sed 's/$/`/'
+                sed 's/^/- /' |
+                sed 's/$//'
             } >> "$GITHUB_STEP_SUMMARY"
 
             git merge --abort
@@ -107,9 +107,9 @@ jobs:
           {
             echo "## Upstream merge prepared"
             echo
-            echo "Merged `Equicord/Equicord:main` locally."
+            echo "Merged Equicord/Equicord:main locally."
             echo
-            echo "Candidate commit: `$AFTER`"
+            echo "Candidate commit: $AFTER"
             echo
             echo "The candidate will be pushed only if validation succeeds."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -141,10 +141,10 @@ jobs:
           {
             echo "## Build decision"
             echo
-            echo "- Event: `$EVENT_NAME`"
-            echo "- Upstream changed: `${SYNC_CHANGED:-false}`"
-            echo "- Force release: `$FORCE_RELEASE`"
-            echo "- Build: `$BUILD`"
+            echo "- Event: $EVENT_NAME"
+            echo "- Upstream changed: ${SYNC_CHANGED:-false}"
+            echo "- Force release: $FORCE_RELEASE"
+            echo "- Build: $BUILD"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Install pnpm
@@ -215,7 +215,7 @@ jobs:
           {
             echo "## Validated upstream sync pushed"
             echo
-            echo "Commit: `$SHA`"
+            echo "Commit: $SHA"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Collect release files
@@ -280,14 +280,14 @@ jobs:
           {
             echo "## Validated build completed"
             echo
-            echo "- Version: `$VERSION`"
-            echo "- Commit: `$SHA`"
-            echo "- Tag: `$TAG`"
+            echo "- Version: $VERSION"
+            echo "- Commit: $SHA"
+            echo "- Tag: $TAG"
             echo
             echo "### Release files"
             echo
             for file in release/*; do
-              echo "- `$(basename "$file")`"
+              echo "- $(basename "$file")"
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -312,12 +312,12 @@ jobs:
               --repo "$GH_REPO" \
               --target "$SHA" \
               --title "EquicordPlus v${VERSION} (${SHORT_SHA})" \
-              --notes "Automated validated EquicordPlus build from commit `${SHA}`.
+              --notes "Automated validated EquicordPlus build from commit ${SHA}.
 
           Validation/build commands:
-          - `pnpm install --frozen-lockfile`
-          - `pnpm buildStandalone`
-          - `pnpm buildWebStandalone`
+          - pnpm install --frozen-lockfile
+          - pnpm buildStandalone
+          - pnpm buildWebStandalone
           - plugin metadata generation
 
           TypeScript and lint diagnostics also run separately and are reported without blocking artifacts while the fork's existing diagnostics are being cleaned up."
@@ -351,9 +351,9 @@ jobs:
             echo
             echo "## Browser store decision"
             echo
-            echo "- Package tag: `$PACKAGE_TAG`"
-            echo "- Latest version tag: `$LATEST_TAG`"
-            echo "- Publish browser extension: `$PUBLISH`"
+            echo "- Package tag: $PACKAGE_TAG"
+            echo "- Latest version tag: $LATEST_TAG"
+            echo "- Publish browser extension: $PUBLISH"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish validated browser extension

@@ -203,7 +203,7 @@ function getVideoContext(target: EventTarget | null): VideoContext | null {
     if (!(target instanceof Element)) return null;
     if (target.closest("[" + FULLSCREEN_UI_ATTRIBUTE + "]")) return null;
 
-    const fullscreen = target.closest<HTMLElement>("[" + FULLSCREEN_ATTRIBUTE + "="true"]");
+    const fullscreen = target.closest<HTMLElement>("[" + FULLSCREEN_ATTRIBUTE + "=\\\"true\\\"]");
     if (fullscreen) {
         const video = fullscreen.querySelector<HTMLVideoElement>("video[" + FULLSCREEN_VIDEO_ATTRIBUTE + "]");
         return video ? { video, container: fullscreen, fullscreen: true } : null;
@@ -1002,7 +1002,7 @@ function onDoubleClickCapture(event: MouseEvent) {
     }
     if (!settings.store.customFullscreen || !(event.target instanceof Element)) return;
 
-    const fullscreen = event.target.closest<HTMLElement>("[" + FULLSCREEN_ATTRIBUTE + "="true"]");
+    const fullscreen = event.target.closest<HTMLElement>("[" + FULLSCREEN_ATTRIBUTE + "=\\\"true\\\"]");
     if (fullscreen) {
         if (event.target.closest("[" + FULLSCREEN_UI_ATTRIBUTE + "]")) return;
         suppressEvent(event);
