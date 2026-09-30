@@ -1,1 +1,5 @@
 * text=auto eol=lf
+
+# EquicordPlus owns its README. The upstream-sync workflow configures this
+# custom merge driver to keep our version during Equicord upstream merges.
+README.md merge=equicordplus-readme

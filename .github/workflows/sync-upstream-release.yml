@@ -1,0 +1,389 @@
+name: Sync Upstream, Validate and Release
+
+on:
+  push:
+    branches:
+      - main
+
+  schedule:
+    # Check Equicord upstream every 6 hours.
+    - cron: "17 */6 * * *"
+
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: "Build a release even when upstream has no new commits"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: equicordplus-sync-release
+  cancel-in-progress: false
+
+jobs:
+  sync-build-release:
+    name: Sync, validate, build and release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout EquicordPlus
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Merge Equicord upstream locally
+        id: sync
+        if: github.event_name != 'push'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # README.md is fork-owned (see .gitattributes). Keep the
+          # EquicordPlus README whenever upstream changes its own README.
+          git config merge.equicordplus-readme.name "Keep EquicordPlus README"
+          git config merge.equicordplus-readme.driver true
+
+          git remote add upstream https://github.com/Equicord/Equicord.git
+          git fetch --no-tags upstream main
+
+          BEFORE="$(git rev-parse HEAD)"
+
+          echo "Current EquicordPlus commit: $BEFORE"
+          echo "Current Equicord upstream: $(git rev-parse upstream/main)"
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Fork already contains the latest Equicord commits."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "New upstream commits found."
+          echo "Attempting automatic merge locally..."
+
+          set +e
+          git merge --no-edit upstream/main
+          MERGE_STATUS=$?
+          set -e
+
+          if [ "$MERGE_STATUS" -ne 0 ]; then
+            echo "::error::Equicord upstream could not be merged automatically."
+
+            {
+              echo "## Upstream merge conflict"
+              echo
+              echo "The automatic merge was aborted and nothing was pushed."
+              echo
+              echo "Conflicting files:"
+              echo
+              git diff --name-only --diff-filter=U |
+                sed 's/^/- /' |
+                sed 's/$//'
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            git merge --abort
+            exit 1
+          fi
+
+          AFTER="$(git rev-parse HEAD)"
+
+          if [ "$BEFORE" = "$AFTER" ]; then
+            echo "Merge produced no changes."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Merge succeeded locally."
+          echo "The merge will be pushed only after all validation succeeds."
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Upstream merge prepared"
+            echo
+            echo "Merged Equicord/Equicord:main locally."
+            echo
+            echo "Candidate commit: $AFTER"
+            echo
+            echo "The candidate will be pushed only if validation succeeds."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Decide whether to build
+        id: gate
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SYNC_CHANGED: ${{ steps.sync.outputs.changed }}
+          FORCE_RELEASE: ${{ github.event.inputs.force_release || 'false' }}
+        run: |
+          set -euo pipefail
+
+          BUILD=false
+
+          if [ "$EVENT_NAME" = "push" ]; then
+            BUILD=true
+          elif [ "$SYNC_CHANGED" = "true" ]; then
+            BUILD=true
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] &&
+               [ "$FORCE_RELEASE" = "true" ]; then
+            BUILD=true
+          fi
+
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "Build required: $BUILD"
+
+          {
+            echo "## Build decision"
+            echo
+            echo "- Event: $EVENT_NAME"
+            echo "- Upstream changed: ${SYNC_CHANGED:-false}"
+            echo "- Force release: $FORCE_RELEASE"
+            echo "- Build: $BUILD"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install pnpm
+        if: steps.gate.outputs.build == 'true'
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        if: steps.gate.outputs.build == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        if: steps.gate.outputs.build == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop artifacts
+        if: steps.gate.outputs.build == 'true'
+        run: pnpm buildStandalone
+
+      - name: TypeScript diagnostics
+        if: steps.gate.outputs.build == 'true'
+        continue-on-error: true
+        run: pnpm testTsc
+
+      - name: Lint diagnostics
+        if: steps.gate.outputs.build == 'true'
+        continue-on-error: true
+        run: |
+          pnpm lint
+          pnpm lint-styles
+          pnpm lint:intl
+          pnpm lint:patches
+
+      - name: Build web artifacts
+        if: steps.gate.outputs.build == 'true'
+        run: pnpm buildWebStandalone
+
+      - name: Generate release metadata
+        if: steps.gate.outputs.build == 'true'
+        run: |
+          pnpm generatePluginJson dist/plugins.json
+          pnpm generateEquicordPluginJson dist/equicordplugins.json
+          pnpm generateVencordPluginJson dist/vencordplugins.json
+          pnpm generateDevsList dist/devs.json
+
+      - name: Create browser extension source archive
+        if: steps.gate.outputs.build == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f dist/extension-sources.zip
+          zip -q -r dist/extension-sources.zip . \
+            -x "node_modules/*" \
+            -x "dist/*" \
+            -x ".git/*"
+
+      - name: Push validated upstream merge
+        if: steps.gate.outputs.build == 'true' && steps.sync.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SHA="$(git rev-parse HEAD)"
+          git push origin HEAD:main
+
+          {
+            echo "## Validated upstream sync pushed"
+            echo
+            echo "Commit: $SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Collect release files
+        if: steps.gate.outputs.build == 'true'
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -d "dist" ]; then
+            echo "::error::The dist directory was not created."
+            exit 1
+          fi
+
+          SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="$(git rev-parse --short=8 HEAD)"
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="build-v${VERSION}-${SHORT_SHA}-${GITHUB_RUN_NUMBER}"
+
+          rm -rf release
+          mkdir -p release
+
+          find dist -maxdepth 1 -type f \
+            \( -name '*.zip' -o -name '*.asar' \) \
+            -exec cp -f {} release/ \;
+
+          if [ -d "dist/browser" ]; then
+            find dist/browser -maxdepth 1 -type f \
+              -name 'browser.*' \
+              -exec cp -f {} release/ \;
+          fi
+
+          find dist -maxdepth 1 -type f \
+            -name 'Equicord.user.*' \
+            -exec cp -f {} release/ \;
+
+          find dist -maxdepth 1 -type f \
+            -name '*.json' \
+            -exec cp -f {} release/ \;
+
+          (
+            cd dist
+            zip -9 -q -r \
+              "../release/EquicordPlus-dist-v${VERSION}-${SHORT_SHA}.zip" \
+              .
+          )
+
+          if [ -z "$(ls -A release)" ]; then
+            echo "::error::No release files were generated."
+            exit 1
+          fi
+
+          echo
+          echo "Release files:"
+          ls -lh release/
+
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "## Validated build completed"
+            echo
+            echo "- Version: $VERSION"
+            echo "- Commit: $SHA"
+            echo "- Tag: $TAG"
+            echo
+            echo "### Release files"
+            echo
+            for file in release/*; do
+              echo "- $(basename "$file")"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Create GitHub build release
+        if: steps.gate.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: Chaython/EquicordPlus
+          TAG: ${{ steps.release.outputs.tag }}
+          SHA: ${{ steps.release.outputs.sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+          SHORT_SHA: ${{ steps.release.outputs.short_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/* --repo "$GH_REPO" --clobber
+          else
+            gh release create "$TAG" \
+              release/* \
+              --repo "$GH_REPO" \
+              --target "$SHA" \
+              --title "EquicordPlus v${VERSION} (${SHORT_SHA})" \
+              --notes "Automated validated EquicordPlus build from commit ${SHA}.
+
+          Validation/build commands:
+          - pnpm install --frozen-lockfile
+          - pnpm buildStandalone
+          - pnpm buildWebStandalone
+          - plugin metadata generation
+
+          TypeScript and lint diagnostics also run separately and are reported without blocking artifacts while the fork's existing diagnostics are being cleaned up."
+          fi
+
+      - name: Check whether browser stores need a version release
+        if: steps.gate.outputs.build == 'true'
+        id: browser_release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          PACKAGE_TAG="v$(node -p "require('./package.json').version")"
+          LATEST_TAG="$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
+
+          if [ -z "$LATEST_TAG" ]; then
+            LATEST_TAG="v0.0.0"
+          fi
+
+          PUBLISH=false
+          if [ "$PACKAGE_TAG" != "$LATEST_TAG" ] &&
+             [ "$(printf '%s\n%s\n' "$LATEST_TAG" "$PACKAGE_TAG" | sort -V | tail -n 1)" = "$PACKAGE_TAG" ]; then
+            PUBLISH=true
+          fi
+
+          echo "package_tag=$PACKAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "publish=$PUBLISH" >> "$GITHUB_OUTPUT"
+
+          {
+            echo
+            echo "## Browser store decision"
+            echo
+            echo "- Package tag: $PACKAGE_TAG"
+            echo "- Latest version tag: $LATEST_TAG"
+            echo "- Publish browser extension: $PUBLISH"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish validated browser extension
+        if: steps.browser_release.outputs.publish == 'true' && vars.ACT == 'false'
+        run: |
+          pnpx @equicord/publish-browser-extension@latest \
+            --chrome-zip dist/extension-chrome.zip \
+            --firefox-zip dist/extension-firefox.zip \
+            --firefox-sources-zip dist/extension-sources.zip \
+            --edge-zip dist/extension-chrome.zip
+        env:
+          CHROME_API_VERSION: ${{ secrets.CHROME_API_VERSION }}
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CHROME_PUBLISHER_ID: ${{ secrets.CHROME_PUBLISHER_ID }}
+          CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
+          CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+          EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+          FIREFOX_COMPATIBILITY: ${{ secrets.FIREFOX_COMPATIBILITY }}
+          FIREFOX_EXTENSION_ID: ${{ secrets.FIREFOX_EXTENSION_ID }}
+          FIREFOX_JWT_ISSUER: ${{ secrets.FIREFOX_JWT_ISSUER }}
+          FIREFOX_JWT_SECRET: ${{ secrets.FIREFOX_JWT_SECRET }}
+
+      - name: Tag successfully published browser version
+        if: steps.browser_release.outputs.publish == 'true' && vars.ACT == 'false'
+        shell: bash
+        env:
+          PACKAGE_TAG: ${{ steps.browser_release.outputs.package_tag }}
+        run: |
+          set -euo pipefail
+          git tag "$PACKAGE_TAG" "$(git rev-parse HEAD)"
+          git push origin "$PACKAGE_TAG"
