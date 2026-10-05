@@ -140,6 +140,20 @@ const settings = definePluginSettings({
             scheduleVideoScan();
         }
     },
+    stretchZoom: {
+        type: OptionType.BOOLEAN,
+        description: "Allow zooming to stretch a camera into its black bars before continuing to crop/zoom",
+        default: true,
+        onChange() {
+            for (const video of activeVideos) {
+                const state = states.get(video);
+                if (!state) continue;
+                invalidateGeometry(state);
+                clampPan(state);
+                scheduleApply(video);
+            }
+        }
+    },
     customFullscreen: {
         type: OptionType.BOOLEAN,
         description: "Double-click a webcam to open it in a custom fullscreen viewer",
@@ -292,11 +306,44 @@ function getGeometry(state: ViewState): GeometrySnapshot {
     return state.geometry;
 }
 
+function getZoomScales(state: ViewState, zoom = state.zoom) {
+    if (!settings.store.stretchZoom || !shouldFitAspectRatio(state)) {
+        return { x: zoom, y: zoom };
+    }
+
+    const geometry = getGeometry(state);
+    if (geometry.baseWidth <= 0 || geometry.baseHeight <= 0) {
+        return { x: zoom, y: zoom };
+    }
+
+    const fillX = Math.max(1, geometry.containerWidth / geometry.baseWidth);
+    const fillY = Math.max(1, geometry.containerHeight / geometry.baseHeight);
+    const fillZoom = Math.max(fillX, fillY);
+
+    if (fillZoom <= MIN_ZOOM + 0.001) {
+        return { x: zoom, y: zoom };
+    }
+
+    if (zoom <= fillZoom) {
+        return {
+            x: Math.min(zoom, fillX),
+            y: Math.min(zoom, fillY)
+        };
+    }
+
+    const extraZoom = zoom / fillZoom;
+    return {
+        x: fillX * extraZoom,
+        y: fillY * extraZoom
+    };
+}
+
 function getPanLimits(state: ViewState) {
     const geometry = getGeometry(state);
+    const scale = getZoomScales(state);
     return {
-        x: Math.max(0, (geometry.baseWidth * state.zoom - geometry.containerWidth) / 2),
-        y: Math.max(0, (geometry.baseHeight * state.zoom - geometry.containerHeight) / 2)
+        x: Math.max(0, (geometry.baseWidth * scale.x - geometry.containerWidth) / 2),
+        y: Math.max(0, (geometry.baseHeight * scale.y - geometry.containerHeight) / 2)
     };
 }
 
@@ -429,8 +476,9 @@ function applyNow(video: HTMLVideoElement, state: ViewState) {
 
     if (transformed) {
         const translateX = state.mirroredX ? -state.x : state.x;
+        const scale = getZoomScales(state);
         video.style.setProperty("translate", String(translateX) + "px " + String(state.y) + "px", "important");
-        video.style.setProperty("scale", String(state.zoom), "important");
+        video.style.setProperty("scale", String(scale.x) + " " + String(scale.y), "important");
         video.style.setProperty("transform-origin", "center center", "important");
     } else {
         state.x = 0;
@@ -861,10 +909,11 @@ function onWheel(event: WheelEvent) {
     const rect = context.container.getBoundingClientRect();
     const pointerX = event.clientX - (rect.left + geometry.containerWidth / 2);
     const pointerY = event.clientY - (rect.top + geometry.containerHeight / 2);
-    const ratio = newZoom / oldZoom;
+    const oldScale = getZoomScales(state, oldZoom);
+    const newScale = getZoomScales(state, newZoom);
 
-    state.x = pointerX - (pointerX - state.x) * ratio;
-    state.y = pointerY - (pointerY - state.y) * ratio;
+    state.x = pointerX - (pointerX - state.x) * (newScale.x / oldScale.x);
+    state.y = pointerY - (pointerY - state.y) * (newScale.y / oldScale.y);
     state.zoom = newZoom;
 
     if (state.zoom <= MIN_ZOOM + 0.001) {
@@ -1065,7 +1114,7 @@ function onLoadedMetadata(event: Event) {
 
 export default definePlugin({
     name: "WebcamZoom",
-    description: "Adds aspect-correct webcams, mouse-wheel zoom, drag panning and true fullscreen camera viewing.",
+    description: "Adds aspect-correct or stretch-to-fill webcams, mouse-wheel zoom, drag panning and true fullscreen camera viewing.",
     authors: [{ name: "Chaython", id: 1415804298771824740n }],
     tags: ["Voice", "Media"],
     settings,
