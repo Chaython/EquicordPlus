@@ -52,6 +52,13 @@ interface ViewState {
     originalObjectPosition: StyleSnapshot;
     originalWidth: StyleSnapshot;
     originalHeight: StyleSnapshot;
+    originalPosition: StyleSnapshot;
+    originalLeft: StyleSnapshot;
+    originalTop: StyleSnapshot;
+    originalMarginLeft: StyleSnapshot;
+    originalMarginTop: StyleSnapshot;
+    originalMaxWidth: StyleSnapshot;
+    originalMaxHeight: StyleSnapshot;
     originalOverflow: StyleSnapshot;
     originalCursor: StyleSnapshot;
     originalBackground: StyleSnapshot;
@@ -263,10 +270,24 @@ function shouldFitAspectRatio(state: ViewState) {
     return isFullscreenContainer(state.container) || settings.store.fitAspectRatio;
 }
 
-function applyAspectRatioFit(video: HTMLVideoElement, container: HTMLElement) {
-    video.style.setProperty("width", "100%", "important");
-    video.style.setProperty("height", "100%", "important");
-    video.style.setProperty("object-fit", "contain", "important");
+function applyAspectRatioFit(state: ViewState) {
+    const { video, container } = state;
+    const geometry = getGeometry(state);
+
+    // Give the <video> itself the aspect-correct rendered size instead of
+    // leaving it at 100% with object-fit: contain. That removes the internal
+    // letterbox/pillarbox area from the element, allowing independent X/Y
+    // scaling to actually stretch the camera image into the black bars.
+    video.style.setProperty("position", "absolute", "important");
+    video.style.setProperty("left", "50%", "important");
+    video.style.setProperty("top", "50%", "important");
+    video.style.setProperty("width", String(geometry.baseWidth) + "px", "important");
+    video.style.setProperty("height", String(geometry.baseHeight) + "px", "important");
+    video.style.setProperty("margin-left", String(-geometry.baseWidth / 2) + "px", "important");
+    video.style.setProperty("margin-top", String(-geometry.baseHeight / 2) + "px", "important");
+    video.style.setProperty("max-width", "none", "important");
+    video.style.setProperty("max-height", "none", "important");
+    video.style.setProperty("object-fit", "fill", "important");
     video.style.setProperty("object-position", "center center", "important");
     container.style.setProperty("background-color", "#000", "important");
 }
@@ -276,6 +297,13 @@ function restoreAspectRatioStyles(state: ViewState) {
     restoreStyle(state.video, "object-position", state.originalObjectPosition);
     restoreStyle(state.video, "width", state.originalWidth);
     restoreStyle(state.video, "height", state.originalHeight);
+    restoreStyle(state.video, "position", state.originalPosition);
+    restoreStyle(state.video, "left", state.originalLeft);
+    restoreStyle(state.video, "top", state.originalTop);
+    restoreStyle(state.video, "margin-left", state.originalMarginLeft);
+    restoreStyle(state.video, "margin-top", state.originalMarginTop);
+    restoreStyle(state.video, "max-width", state.originalMaxWidth);
+    restoreStyle(state.video, "max-height", state.originalMaxHeight);
     restoreStyle(state.container, "background-color", state.originalBackground);
 }
 
@@ -417,6 +445,13 @@ function createState(video: HTMLVideoElement, container: HTMLElement, key: strin
         originalObjectPosition: getStyleSnapshot(video, "object-position"),
         originalWidth: getStyleSnapshot(video, "width"),
         originalHeight: getStyleSnapshot(video, "height"),
+        originalPosition: getStyleSnapshot(video, "position"),
+        originalLeft: getStyleSnapshot(video, "left"),
+        originalTop: getStyleSnapshot(video, "top"),
+        originalMarginLeft: getStyleSnapshot(video, "margin-left"),
+        originalMarginTop: getStyleSnapshot(video, "margin-top"),
+        originalMaxWidth: getStyleSnapshot(video, "max-width"),
+        originalMaxHeight: getStyleSnapshot(video, "max-height"),
         originalOverflow: getStyleSnapshot(container, "overflow"),
         originalCursor: getStyleSnapshot(container, "cursor"),
         originalBackground: getStyleSnapshot(container, "background-color")
@@ -442,6 +477,13 @@ function restoreElement(video: HTMLVideoElement, state: ViewState) {
     restoreStyle(video, "object-position", state.originalObjectPosition);
     restoreStyle(video, "width", state.originalWidth);
     restoreStyle(video, "height", state.originalHeight);
+    restoreStyle(video, "position", state.originalPosition);
+    restoreStyle(video, "left", state.originalLeft);
+    restoreStyle(video, "top", state.originalTop);
+    restoreStyle(video, "margin-left", state.originalMarginLeft);
+    restoreStyle(video, "margin-top", state.originalMarginTop);
+    restoreStyle(video, "max-width", state.originalMaxWidth);
+    restoreStyle(video, "max-height", state.originalMaxHeight);
     restoreStyle(state.container, "overflow", state.originalOverflow);
     restoreStyle(state.container, "cursor", state.originalCursor);
     restoreStyle(state.container, "background-color", state.originalBackground);
@@ -467,7 +509,7 @@ function getState(video: HTMLVideoElement, container: HTMLElement) {
 }
 
 function applyNow(video: HTMLVideoElement, state: ViewState) {
-    if (shouldFitAspectRatio(state)) applyAspectRatioFit(video, state.container);
+    if (shouldFitAspectRatio(state)) applyAspectRatioFit(state);
     else restoreAspectRatioStyles(state);
 
     const limits = clampPan(state);
