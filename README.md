@@ -47,18 +47,6 @@ Its optional overlay observes the active WebRTC sender and can report capture FP
 
 Use **Diagnostics Overlay** for the on-screen view and **Console Logging** for additional troubleshooting output. Neither option modifies the stream.
 
-
-### WebScreenShare custom controls
-
-The browser-only `WebScreenShare` plugin now turns **Custom** stream mode into a full advanced WebRTC profile instead of leaving it as a blank/default content-hint option.
-
-Custom mode can configure the preferred video codec, content hint, minimum/target/maximum bitrate, RTP encoder FPS cap, resolution downscale factor, degradation preference, RTP priority, network priority, and keyframe interval. Codec choices are populated from the codecs Chromium actually reports as available.
-
-Most advanced fields use **Automatic** or `0` to leave Discord/Chromium's current behavior unchanged. The bitrate controls also integrate with Discord's stream-quality values, while `WebScreenShareFixes` continues to provide the broader Chromium/WebRTC bitrate ceiling.
-
-Browser WebRTC does not expose arbitrary FFmpeg encoder controls such as CRF, encoder preset/tune, B-frame count, reference-frame count, or direct NVENC/AMF/QSV selection, so those are intentionally not shown as non-functional settings.
-
-
 ## Build EquicordPlus from source
 
 ### Requirements
