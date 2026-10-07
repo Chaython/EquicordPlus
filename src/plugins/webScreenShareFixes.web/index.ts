@@ -33,15 +33,21 @@ export default definePlugin({
             ]
         },
         {
-            // setDesktopEncodingOptions() calculates one max-bitrate value and
-            // then reuses it for both the WebRTC quality constraints and the
-            // OP 12 stream max_bitrate advertised to Discord's RTC server.
-            // Override that single value so the two layers stay in sync.
-            find: "lastDesktopEncodingOptions",
-            replacement: {
-                match: /(let (\i)=this\.calcMaxBitrateFunc\(\{width:\i,height:\i,framerate:\i,videoCodec:this\.currentVideoCodec\}\);)null==\2&&\(\2=[^;]+?\);/,
-                replace: "$1$2=8e7;"
-            }
+            // Discord Web's stable media constants include a 9 Mbps high-quality
+            // Go Live ceiling and a 0.6/3.5 Mbps desktop target/max profile.
+            // Patch those constants directly so both setDesktopEncodingOptions()
+            // and OP 12 stream signalling inherit the higher values.
+            find: "\"remoteSinkWantsPixelCount\"",
+            replacement: [
+                {
+                    match: /(\i)=35e5,(\i)=9e6,(?=\i=\["remoteSinkWantsPixelCount")/,
+                    replace: "$1=35e5,$2=8e7,"
+                },
+                {
+                    match: /desktopBitrate:\{min:5e5,max:35e5,target:6e5\}/,
+                    replace: "desktopBitrate:{min:5e5,max:8e7,target:2e7}"
+                }
+            ]
         },
         {
             find: "ApplicationStreamPreviewUploadManager",
