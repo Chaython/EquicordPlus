@@ -10,7 +10,7 @@ import definePlugin from "@utils/types";
 export default definePlugin({
     name: "WebScreenShareFixes",
     authors: [Devs.Kaitlyn],
-    description: "Fixes Chromium/Vesktop screen sharing: raises Discord/WebRTC bitrate limits and prevents preview CPU growth.",
+    description: "Fixes Chromium/Vesktop screen sharing: raises Discord/WebRTC bitrate limits, seeds bandwidth probing/padding, and prevents preview CPU growth.",
     tags: ["Voice"],
     enabledByDefault: true,
 
@@ -20,7 +20,11 @@ export default definePlugin({
             replacement: [
                 {
                     match: /`x-google-max-bitrate=\$\{\i\}`/,
-                    replace: '"x-google-max-bitrate=80000"'
+                    // Chromium's WebRTC BWE starts conservatively. A non-zero
+                    // min bitrate enables RTP padding, while start bitrate seeds
+                    // the initial probing rate so the estimator can discover
+                    // available capacity instead of idling near ~300 kbps.
+                    replace: '"x-google-min-bitrate=1000;x-google-start-bitrate=10000;x-google-max-bitrate=80000"'
                 },
                 {
                     match: /;usedtx=\$\{(\i)\?"0":"1"\}/,
