@@ -8,7 +8,7 @@ import "./styles.css";
 import { DataStore } from "@api/index";
 import definePlugin from "@utils/types";
 import { findByPropsLazy } from "@webpack";
-import { Constants, FluxDispatcher, React, RestAPI, showToast, UserStore } from "@webpack/common";
+import { Constants, FluxDispatcher, React, RestAPI, UserStore } from "@webpack/common";
 
 const TokenStore = findByPropsLazy("getToken", "setToken", "encryptAndStoreTokens", "removeToken") as any;
 const MultiAccountStore = findByPropsLazy("getUsers", "getValidUsers", "getIsValidatingUsers") as any;
@@ -99,6 +99,7 @@ function storePerUserToken(token: string, userId: string) {
 function upsertNativeAccount(token: string, user: DiscordUser) {
     const users = getNativeUsers();
     let account = users.find(entry => entry.id === user.id);
+    const existed = Boolean(account);
 
     if (!account) {
         account = {
@@ -128,12 +129,16 @@ function upsertNativeAccount(token: string, user: DiscordUser) {
         type: "MULTI_ACCOUNT_VALIDATE_TOKEN_SUCCESS",
         userId: user.id
     });
+
+    return existed;
 }
 
 async function importToken(token: string) {
     const result = await validateToken(token);
-    if (result.status === "valid") upsertNativeAccount(token, result.user);
-    return result;
+    if (result.status !== "valid") return result;
+
+    const existed = upsertNativeAccount(token, result.user);
+    return { ...result, existed };
 }
 
 function copyText(value: string) {
@@ -191,14 +196,9 @@ function TokenTools() {
 
                 const result = await importToken(token);
                 if (result.status === "valid") {
-                    if (seenUserIds.has(result.user.id)) {
-                        refreshed++;
-                    } else {
-                        const alreadyPresent = getNativeUsers().filter(account => account.id === result.user.id).length > 1;
-                        if (alreadyPresent) refreshed++;
-                        else added++;
-                        seenUserIds.add(result.user.id);
-                    }
+                    if (seenUserIds.has(result.user.id) || result.existed) refreshed++;
+                    else added++;
+                    seenUserIds.add(result.user.id);
                 } else if (result.status === "invalid") {
                     invalid++;
                 } else if (result.status === "rate_limited") {
