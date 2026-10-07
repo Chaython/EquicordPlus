@@ -23,6 +23,7 @@ interface PreviousOutboundStats {
 
 const patches: MethodPatch[] = [];
 const trackedSenders = new Set<RTCRtpSender>();
+const senderPeerConnections = new WeakMap<RTCRtpSender, RTCPeerConnection>();
 const previousOutboundStats = new WeakMap<RTCRtpSender, PreviousOutboundStats>();
 let overlay: HTMLDivElement | null = null;
 let overlayTimer: number | null = null;
@@ -97,9 +98,10 @@ function isLikelyScreenTrack(track: MediaStreamTrack | null | undefined) {
     return /screen|window|desktop|display|monitor/i.test(track.label);
 }
 
-function trackSender(sender: RTCRtpSender) {
+function trackSender(sender: RTCRtpSender, peerConnection?: RTCPeerConnection) {
     if (!isLikelyScreenTrack(sender.track)) return;
     trackedSenders.add(sender);
+    if (peerConnection) senderPeerConnections.set(sender, peerConnection);
 
     const track = sender.track!;
     track.addEventListener("ended", () => {
@@ -119,7 +121,7 @@ function installObserverHooks() {
         ...streams: MediaStream[]
     ) {
         const sender = original.call(this, track, ...streams) as RTCRtpSender;
-        trackSender(sender);
+        trackSender(sender, this);
         return sender;
     });
 
@@ -129,7 +131,7 @@ function installObserverHooks() {
         init?: RTCRtpTransceiverInit
     ) {
         const transceiver = original.call(this, trackOrKind, init) as RTCRtpTransceiver;
-        trackSender(transceiver.sender);
+        trackSender(transceiver.sender, this);
         return transceiver;
     });
 
@@ -148,6 +150,51 @@ function installObserverHooks() {
 
         return result;
     });
+}
+
+function getLocalVideoCodecCapabilities() {
+    const codecs = RTCRtpSender.getCapabilities?.("video")?.codecs ?? [];
+    const names = new Set<string>();
+
+    for (const codec of codecs) {
+        const mimeType = codec.mimeType?.toUpperCase();
+        if (!mimeType?.startsWith("VIDEO/")) continue;
+        const name = mimeType.slice("VIDEO/".length);
+        if (/^(RTX|RED|ULPFEC|FLEXFEC)$/i.test(name)) continue;
+        names.add(name);
+    }
+
+    return [...names];
+}
+
+function getVideoCodecsFromSdp(sdp?: string | null) {
+    if (!sdp) return [];
+
+    const lines = sdp.split(/\r?\n/);
+    const videoStart = lines.findIndex(line => line.startsWith("m=video "));
+    if (videoStart < 0) return [];
+
+    let videoEnd = lines.length;
+    for (let i = videoStart + 1; i < lines.length; i++) {
+        if (lines[i].startsWith("m=")) {
+            videoEnd = i;
+            break;
+        }
+    }
+
+    const section = lines.slice(videoStart, videoEnd);
+    const payloads = new Set((section[0]?.split(/\s+/).slice(3) ?? []).map(String));
+    const names = new Set<string>();
+
+    for (const line of section) {
+        const match = /^a=rtpmap:(\d+)\s+([^/\s]+)/i.exec(line);
+        if (!match || !payloads.has(match[1])) continue;
+        const name = match[2].toUpperCase();
+        if (/^(RTX|RED|ULPFEC|FLEXFEC)$/i.test(name)) continue;
+        names.add(name);
+    }
+
+    return [...names];
 }
 
 function formatMbps(value?: number) {
@@ -171,6 +218,18 @@ async function collectDiagnostics() {
 
         const trackSettings = track.getSettings();
         lines.push(`Capture: ${trackSettings.width ?? "?"}×${trackSettings.height ?? "?"} @ ${trackSettings.frameRate ?? "?"} FPS`);
+
+        const browserCodecs = getLocalVideoCodecCapabilities();
+        if (browserCodecs.length) lines.push(`Browser codecs: ${browserCodecs.join(", ")}`);
+
+        const peerConnection = senderPeerConnections.get(sender);
+        if (peerConnection) {
+            const localSdpCodecs = getVideoCodecsFromSdp(peerConnection.currentLocalDescription?.sdp ?? peerConnection.localDescription?.sdp);
+            const remoteSdpCodecs = getVideoCodecsFromSdp(peerConnection.currentRemoteDescription?.sdp ?? peerConnection.remoteDescription?.sdp);
+
+            if (localSdpCodecs.length) lines.push(`Local SDP: ${localSdpCodecs.join(", ")}`);
+            if (remoteSdpCodecs.length) lines.push(`Remote SDP: ${remoteSdpCodecs.join(", ")}`);
+        }
 
         try {
             const stats = await sender.getStats();
