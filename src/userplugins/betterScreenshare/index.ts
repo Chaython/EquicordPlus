@@ -154,12 +154,20 @@ async function tuneSender(sender: RTCRtpSender) {
         // encoder alternate between incompatible dimensions.
         if (!encodings?.length) return;
 
-        for (const encoding of encodings) {
-            encoding.maxBitrate = Math.max(encoding.maxBitrate ?? 0, MAX_BITRATE);
-            encoding.maxFramerate = Math.max(encoding.maxFramerate ?? 0, MAX_FRAMERATE);
-            encoding.priority = "high";
-            encoding.networkPriority = "high";
-        }
+        // Boost only the existing highest-resolution layer. Lower simulcast
+        // layers keep Discord's own bitrate/FPS limits so fallback/adaptation
+        // behaviour remains intact and the 20 Mbps target stays a stream
+        // ceiling rather than being applied independently to every layer.
+        const highestResolutionEncoding = encodings.reduce((best, encoding) => {
+            const bestScale = best.scaleResolutionDownBy ?? 1;
+            const encodingScale = encoding.scaleResolutionDownBy ?? 1;
+            return encodingScale < bestScale ? encoding : best;
+        });
+
+        highestResolutionEncoding.maxBitrate = Math.max(highestResolutionEncoding.maxBitrate ?? 0, MAX_BITRATE);
+        highestResolutionEncoding.maxFramerate = Math.max(highestResolutionEncoding.maxFramerate ?? 0, MAX_FRAMERATE);
+        highestResolutionEncoding.priority = "high";
+        highestResolutionEncoding.networkPriority = "high";
 
         parameters.encodings = encodings;
 
