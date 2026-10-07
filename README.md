@@ -24,7 +24,9 @@ EquicordPlus currently includes the following extra user plugins under [`src/use
 | [AllConnectionsEnabled](src/userplugins/allConnectionsEnabled) | Enables all connection types exposed by Discord. |
 | [AutoDeleteDMs](src/userplugins/autoDeleteDms) | Automatically deletes DMs after a configurable amount of time. |
 | [AutoUnmute](src/userplugins/autoUnmute) | Automatically unmutes/undeafens after server mute/deafen when permissions allow it. |
-| [BigFileUpload](src/userplugins/bigFileUpload) | Sends oversized files through supported external upload providers from drag/drop, paste, or the upload button. |\n| [BetterMic](src/userplugins/betterMic) | Improves Chromium/WebRTC microphone quality by disabling echo cancellation, noise suppression, and AGC while preferring raw 48 kHz/stereo capture. |\n| [BetterScreenshare](src/userplugins/betterScreenshare) | Read-only WebRTC screen-share diagnostics for encoded FPS, encode time, bitrate, codec, encoder, quality limits, RTT, and packet loss. Does not modify stream quality or encoder settings. |
+| [BigFileUpload](src/userplugins/bigFileUpload) | Sends oversized files through supported external upload providers from drag/drop, paste, or the upload button. |
+| [BetterMic](src/userplugins/betterMic) | Improves Chromium/WebRTC microphone capture by disabling browser processing such as echo cancellation, noise suppression, and AGC while preferring 48 kHz/stereo when supported. |
+| [BetterScreenshare](src/userplugins/betterScreenshare) | Read-only WebRTC screen-share diagnostics for capture/encoded FPS, encode time, bitrate, codec, encoder implementation, quality limits, RTT, and packet loss. It does not alter stream quality or encoder settings. |
 | [MessageCleaner](src/userplugins/messageCleaner) | Bulk message cleanup with rate-limit handling, statistics, and confirmation. |
 | [PasswordManager](src/userplugins/passwordManager) | Adds an in-client password-management vault. |
 | [SendToAllDMs](src/userplugins/sendtoalldms) | Adds a command for sending a message to multiple friend DMs with blacklist/whitelist controls. This can carry account-enforcement risk if abused. |
