@@ -37,6 +37,14 @@ EquicordPlus currently includes the following extra user plugins under [`src/use
 
 These are in addition to the plugins inherited from Equicord.
 
+### BetterScreenshare diagnostics
+
+`BetterScreenshare` is intentionally **diagnostics-only**. Equicord and Discord remain responsible for screen-share resolution, frame rate, bitrate, codec selection, scaling, capture constraints, simulcast layers, and encoder behavior.
+
+Its optional overlay observes the active WebRTC sender and can report capture FPS/resolution, actual encoded FPS, average encode time per frame, send/target bitrate, source FPS, frames sent/encoded/dropped when exposed by Chromium, quality-limitation reason/durations, average QP, codec, encoder implementation, power-efficiency status, scalability mode, RTT, and packet loss.
+
+Use **Diagnostics Overlay** for the on-screen view and **Console Logging** for additional troubleshooting output. Neither option modifies the stream.
+
 ## Build EquicordPlus from source
 
 ### Requirements
