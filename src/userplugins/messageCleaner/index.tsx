@@ -678,11 +678,6 @@ export default definePlugin({
 • Max age: ${settings.store.maxAge} days
 • Debug mode: ${settings.store.debugMode}`);
 
-        showNotification({
-            title: "🧹 MessageCleaner enabled",
-            body: "Right-click on a channel to clean messages",
-            icon: undefined,
-        });
     },
 
     stop() {
