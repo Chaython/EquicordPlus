@@ -17,23 +17,23 @@ interface MethodPatch {
 const patches: MethodPatch[] = [];
 const screenTracks = new WeakSet<MediaStreamTrack>();
 const trackedSenders = new Set<RTCRtpSender>();
+const previousOutboundStats = new WeakMap<RTCRtpSender, { bytesSent: number; timestamp: number; }>();
 let overlay: HTMLDivElement | null = null;
 let overlayTimer: number | null = null;
 
 const MAX_BITRATE = 20_000_000;
 const MAX_FRAMERATE = 60;
 const CONTENT_HINT = "detail";
-const DEGRADATION_PREFERENCE: RTCDegradationPreference = "maintain-resolution";
 
 const settings = definePluginSettings({
     improveCapture: {
         type: OptionType.BOOLEAN,
-        description: "Prefer detailed, native-resolution screen capture up to 60 FPS",
+        description: "Prefer detailed screen capture without overriding Discord's selected resolution or aspect ratio",
         default: true
     },
     tuneSender: {
         type: OptionType.BOOLEAN,
-        description: "Tune WebRTC video senders for up to 20 Mbps and maintain-resolution behavior",
+        description: "Raise WebRTC bitrate/FPS ceilings without overriding Discord's scaling or resolution decisions",
         default: true
     },
     preferModernCodecs: {
@@ -108,21 +108,20 @@ function markScreenTrack(track: MediaStreamTrack) {
 }
 
 function improveDisplayConstraints(constraints: DisplayMediaStreamOptions = {}): DisplayMediaStreamOptions {
+    // Do not replace Discord's capture dimensions, aspect ratio, resizeMode,
+    // or explicit frame-rate choice. Rewriting capture constraints can make
+    // Chromium renegotiate between Discord's layer geometry and ours, which
+    // presents as stretched frames or rapid native/stretched flicker.
     if (!settings.store.improveCapture) return constraints;
 
     const originalVideo = constraints.video;
-    if (originalVideo === false) return constraints;
-
-    const video = originalVideo && typeof originalVideo === "object"
-        ? { ...originalVideo }
-        : {};
+    if (originalVideo === false || !originalVideo || typeof originalVideo !== "object") {
+        return constraints;
+    }
 
     return {
         ...constraints,
-        video: {
-            ...video,
-            frameRate: { ideal: MAX_FRAMERATE, max: MAX_FRAMERATE }
-        }
+        video: { ...originalVideo }
     };
 }
 
@@ -147,22 +146,22 @@ async function tuneSender(sender: RTCRtpSender) {
 
     try {
         const parameters = sender.getParameters();
-        const encodings = parameters.encodings?.length ? parameters.encodings : [{}];
+        const encodings = parameters.encodings;
 
-        for (let i = 0; i < encodings.length; i++) {
-            const encoding = encodings[i];
-            encoding.maxBitrate = MAX_BITRATE;
-            encoding.maxFramerate = MAX_FRAMERATE;
+        // Never manufacture an encoding or rewrite scaleResolutionDownBy.
+        // Discord uses its encoding layers to preserve source geometry and to
+        // move between quality levels. Forcing a layer to scale=1 can make the
+        // encoder alternate between incompatible dimensions.
+        if (!encodings?.length) return;
+
+        for (const encoding of encodings) {
+            encoding.maxBitrate = Math.max(encoding.maxBitrate ?? 0, MAX_BITRATE);
+            encoding.maxFramerate = Math.max(encoding.maxFramerate ?? 0, MAX_FRAMERATE);
             encoding.priority = "high";
             encoding.networkPriority = "high";
-
-            if (i === encodings.length - 1) {
-                encoding.scaleResolutionDownBy = 1;
-            }
         }
 
         parameters.encodings = encodings;
-        parameters.degradationPreference = DEGRADATION_PREFERENCE;
 
         await sender.setParameters(parameters);
 
