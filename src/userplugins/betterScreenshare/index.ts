@@ -280,8 +280,17 @@ async function collectDiagnostics() {
             });
 
             if (outbound) {
-                const bitrate = outbound.targetBitrate ?? outbound.totalEncodedBytesTarget;
-                if (bitrate) lines.push(`Send/target: ${formatMbps(Number(bitrate))} Mbps`);
+                const now = Number(outbound.timestamp ?? performance.now());
+                const bytesSent = Number(outbound.bytesSent ?? 0);
+                const previous = previousOutboundStats.get(sender);
+                let sendBitrate: number | undefined;
+
+                if (previous && now > previous.timestamp && bytesSent >= previous.bytesSent) {
+                    sendBitrate = ((bytesSent - previous.bytesSent) * 8 * 1000) / (now - previous.timestamp);
+                }
+                previousOutboundStats.set(sender, { bytesSent, timestamp: now });
+
+                lines.push(`Send/target: ${formatMbps(sendBitrate)} / ${formatMbps(target)} Mbps`);
                 if (outbound.qualityLimitationReason) lines.push(`Quality limit: ${outbound.qualityLimitationReason}`);
                 if (outbound.qpSum != null && outbound.framesEncoded) {
                     lines.push(`Avg QP: ${(outbound.qpSum / outbound.framesEncoded).toFixed(1)}`);
@@ -293,6 +302,7 @@ async function collectDiagnostics() {
                 if (outbound.scalabilityMode) lines.push(`Scalability: ${outbound.scalabilityMode}`);
             }
 
+            if (outbound?.codecId) codec = stats.get(outbound.codecId) ?? codec;
             if (codec?.mimeType) lines.push(`Codec: ${codec.mimeType.replace("video/", "")}`);
             if (remoteInbound?.roundTripTime != null) lines.push(`RTT: ${Math.round(remoteInbound.roundTripTime * 1000)} ms`);
             if (remoteInbound?.fractionLost != null) lines.push(`Loss: ${(remoteInbound.fractionLost * 100).toFixed(2)}%`);
