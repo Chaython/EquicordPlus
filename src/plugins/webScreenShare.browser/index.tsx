@@ -297,9 +297,11 @@ export default definePlugin({
         const width = 3840;
 
         Object.assign(opts, {
+            // Allow WebRTC to back off when needed, but start from a useful
+            // high-quality target instead of Discord Web's sub-megabit default.
             bitrateMin: 500000,
-            bitrateMax: 8000000,
-            bitrateTarget: 600000
+            bitrateMax: 80000000,
+            bitrateTarget: 20000000
         });
         if (opts?.encode) {
             Object.assign(opts.encode, {
