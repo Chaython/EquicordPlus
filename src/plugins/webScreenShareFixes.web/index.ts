@@ -29,21 +29,15 @@ export default definePlugin({
             ]
         },
         {
-            // Discord Web's setDesktopEncodingOptions() writes its calculated
-            // bitrate cap into both the Go Live quality manager and the stream
-            // parameters later sent as OP 12 max_bitrate. Raise both without
-            // touching codec negotiation or RTCRtpSender methods.
+            // setDesktopEncodingOptions() calculates one max-bitrate value and
+            // then reuses it for both the WebRTC quality constraints and the
+            // OP 12 stream max_bitrate advertised to Discord's RTC server.
+            // Override that single value so the two layers stay in sync.
             find: "lastDesktopEncodingOptions",
-            replacement: [
-                {
-                    match: /\.setGoliveQuality\(\{capture:(\i),encode:(\i),bitrateMax:\i\}\)/,
-                    replace: ".setGoliveQuality({capture:$1,encode:$2,bitrateMin:5e5,bitrateMax:8e7,bitrateTarget:2e7})"
-                },
-                {
-                    match: /(\.videoStreamParameters\[\i\]\.maxBitrate)=\i/,
-                    replace: "$1=8e7"
-                }
-            ]
+            replacement: {
+                match: /(let (\i)=this\.calcMaxBitrateFunc\(\{width:\i,height:\i,framerate:\i,videoCodec:this\.currentVideoCodec\}\);)null==\2&&\(\2=[^;]+?\);/,
+                replace: "$1$2=8e7;"
+            }
         },
         {
             find: "ApplicationStreamPreviewUploadManager",
