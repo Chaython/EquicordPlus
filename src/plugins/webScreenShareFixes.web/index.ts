@@ -10,7 +10,7 @@ import definePlugin from "@utils/types";
 export default definePlugin({
     name: "WebScreenShareFixes",
     authors: [Devs.Kaitlyn],
-    description: "Removes 2500kbps bitrate cap on chromium and vesktop clients and fixes CPU usage growing endlessly while screensharing.",
+    description: "Fixes Chromium/Vesktop screen sharing: raises the SDP bitrate ceiling, exposes AV1 to Discord's RTC codec negotiation, and prevents preview CPU growth.",
     tags: ["Voice"],
     enabledByDefault: true,
 
@@ -25,6 +25,13 @@ export default definePlugin({
                 {
                     match: /;usedtx=\$\{(\i)\?"0":"1"\}/,
                     replace: '$&${$1?";stereo=1;sprop-stereo=1":""}'
+                },
+                {
+                    // Discord Web parses Chromium's video SDP into the RTC codec list
+                    // using H264/VP8/VP9 (plus H265 behind BROWSER_HEVC), dropping AV1
+                    // before OP 1 SELECT_PROTOCOL. Add AV1 first while preserving fallbacks.
+                    match: /(\i)\?\[(\i)\.UK\.H265,\2\.UK\.H264,\2\.UK\.VP8,\2\.UK\.VP9\]:\[\2\.UK\.H264,\2\.UK\.VP8,\2\.UK\.VP9\]/,
+                    replace: '$1?["AV1",$2.UK.H265,$2.UK.H264,$2.UK.VP8,$2.UK.VP9]:["AV1",$2.UK.H264,$2.UK.VP8,$2.UK.VP9]'
                 },
             ]
         },
