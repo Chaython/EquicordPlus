@@ -178,6 +178,8 @@ async function collectDiagnostics() {
             let codec: any = null;
             let remoteInbound: any = null;
             let mediaSource: any = null;
+            let selectedCandidatePair: any = null;
+            let transport: any = null;
 
             stats.forEach(report => {
                 if (report.type === "outbound-rtp" && (report.kind === "video" || report.mediaType === "video")) {
@@ -186,8 +188,16 @@ async function collectDiagnostics() {
                     remoteInbound = report;
                 } else if (report.type === "media-source" && report.kind === "video") {
                     mediaSource = report;
+                } else if (report.type === "transport") {
+                    transport = report;
+                } else if (report.type === "candidate-pair" && report.state === "succeeded" && report.nominated) {
+                    selectedCandidatePair = report;
                 }
             });
+
+            if (transport?.selectedCandidatePairId) {
+                selectedCandidatePair = stats.get(transport.selectedCandidatePairId) ?? selectedCandidatePair;
+            }
 
             if (!outbound) {
                 lines.push("No outbound RTP stats yet");
@@ -265,11 +275,23 @@ async function collectDiagnostics() {
                 lines.push(`Power-efficient: ${outbound.powerEfficientEncoder ? "yes" : "no"}`);
             }
             if (outbound.scalabilityMode) lines.push(`Scalability: ${outbound.scalabilityMode}`);
+            if (selectedCandidatePair?.availableOutgoingBitrate != null) {
+                lines.push(`BWE available: ${formatMbps(Number(selectedCandidatePair.availableOutgoingBitrate))} Mbps`);
+            }
+            if (selectedCandidatePair?.currentRoundTripTime != null) {
+                lines.push(`ICE RTT: ${Math.round(Number(selectedCandidatePair.currentRoundTripTime) * 1000)} ms`);
+            }
             if (remoteInbound?.roundTripTime != null) {
                 lines.push(`RTT: ${Math.round(remoteInbound.roundTripTime * 1000)} ms`);
             }
             if (remoteInbound?.fractionLost != null) {
                 lines.push(`Loss: ${(remoteInbound.fractionLost * 100).toFixed(2)}%`);
+            }
+            if (outbound.retransmittedBytesSent != null) {
+                lines.push(`Retransmit: ${formatMbps(Number(outbound.retransmittedBytesSent) * 8)} Mbit total`);
+            }
+            if (outbound.nackCount != null || outbound.pliCount != null || outbound.firCount != null) {
+                lines.push(`NACK/PLI/FIR: ${outbound.nackCount ?? 0}/${outbound.pliCount ?? 0}/${outbound.firCount ?? 0}`);
             }
         } catch (error) {
             lines.push("Stats unavailable");
