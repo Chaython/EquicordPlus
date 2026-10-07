@@ -282,10 +282,14 @@ export default definePlugin({
 
     patches: [
         {
-            find: "this.getDefaultGoliveQuality()",
+            // Patch Discord Web's Go Live default profile directly. The old
+            // call-site wrapper around this.getDefaultGoliveQuality() became
+            // unreliable across minified bundle changes and could fall back
+            // to the stock 720p30 / 2.5 Mbps profile after a full restart.
+            find: "getDefaultGoliveQuality(){",
             replacement: {
-                match: /this\.getDefaultGoliveQuality\(\)/,
-                replace: "$self.getGoliveMaxQuality($&)"
+                match: /getDefaultGoliveQuality\(\)\{return new (\i)\(\{capture:\{width:1280,height:720,framerate:([^}]+)\},encode:\{width:1280,height:720,framerate:\2,pixelCount:921600\},bitrateMin:this\.options\.desktopBitrate\.min,bitrateMax:this\.options\.desktopBitrate\.max,bitrateTarget:this\.options\.desktopBitrate\.target\}\)\}/,
+                replace: "getDefaultGoliveQuality(){return new $1({capture:{width:3840,height:2160,framerate:120},encode:{width:3840,height:2160,framerate:120,pixelCount:8294400},bitrateMin:5e5,bitrateMax:8e7,bitrateTarget:2e7})}"
             }
         }
     ],
