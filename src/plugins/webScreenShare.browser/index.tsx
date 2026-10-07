@@ -745,13 +745,7 @@ export default definePlugin({
             replacement: [
                 {
                     match: /this\.getDefaultGoliveQuality\(\)/,
-                    replace: "$self.getGoliveMaxQuality(        {
-            find: "this.getDefaultGoliveQuality()",
-            replacement: {
-                match: /this\.getDefaultGoliveQuality\(\)/,
-                replace: "$self.getGoliveMaxQuality($&)"
-            }
-        },)"
+                    replace: "$self.getGoliveMaxQuality($&)"
                 },
                 {
                     match: /setGoliveQuality\((\i)\)\{/,
@@ -760,13 +754,7 @@ export default definePlugin({
                 },
                 {
                     match: /(\i)\.encodingVideoMinBitRate=\i\.bitrateMin,\i\.encodingVideoMaxBitRate=\i\.bitrateMax/,
-                    replace: "        {
-            find: "this.getDefaultGoliveQuality()",
-            replacement: {
-                match: /this\.getDefaultGoliveQuality\(\)/,
-                replace: "$self.getGoliveMaxQuality($&)"
-            }
-        },;$self.patchEncodingVideoBitrates($1)",
+                    replace: "$&;$self.patchEncodingVideoBitrates($1)",
                     noWarn: true
                 }
             ]
