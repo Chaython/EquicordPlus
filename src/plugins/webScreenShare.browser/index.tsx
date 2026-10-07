@@ -587,6 +587,17 @@ function isCustomScreenSender(sender: RTCRtpSender) {
     return !!sender.track && customScreenTracks.has(sender.track);
 }
 
+function preferSelectedCodec<T extends { mimeType: string; }>(codecs: readonly T[]) {
+    const selected = (settings.store.customCodec ?? "auto").toLowerCase();
+    if (selected === "auto") return [...codecs];
+
+    return [...codecs].sort((a, b) => {
+        const aPreferred = a.mimeType.toLowerCase() === selected ? 0 : 1;
+        const bPreferred = b.mimeType.toLowerCase() === selected ? 0 : 1;
+        return aPreferred - bPreferred;
+    });
+}
+
 function applyCustomCodecPreference(transceiver: RTCRtpTransceiver) {
     const selected = (settings.store.customCodec ?? "auto").toLowerCase();
     if (selected === "auto" || typeof transceiver.setCodecPreferences !== "function") return;
@@ -594,14 +605,8 @@ function applyCustomCodecPreference(transceiver: RTCRtpTransceiver) {
     const codecs = RTCRtpReceiver.getCapabilities?.("video")?.codecs;
     if (!codecs?.length) return;
 
-    const sorted = [...codecs].sort((a, b) => {
-        const aPreferred = a.mimeType.toLowerCase() === selected ? 0 : 1;
-        const bPreferred = b.mimeType.toLowerCase() === selected ? 0 : 1;
-        return aPreferred - bPreferred;
-    });
-
     try {
-        transceiver.setCodecPreferences(sorted);
+        transceiver.setCodecPreferences(preferSelectedCodec(codecs));
     } catch (error) {
         logger.debug("Could not apply preferred WebRTC codec.", error);
     }
@@ -621,35 +626,40 @@ function getCustomBitrates() {
     return { min, target, max };
 }
 
+function mergeCustomSenderParameters(sender: RTCRtpSender, parameters: RTCRtpSendParameters) {
+    if (!isCustomScreenSender(sender) || !parameters.encodings?.length) return parameters;
+
+    const encoding = parameters.encodings.reduce((best, current) => {
+        const bestScale = best.scaleResolutionDownBy ?? 1;
+        const currentScale = current.scaleResolutionDownBy ?? 1;
+        return currentScale < bestScale ? current : best;
+    });
+
+    const { max } = getCustomBitrates();
+    const maxFps = Math.max(0, Number(settings.store.customEncoderMaxFps ?? 0));
+    const scale = Math.max(0, Number(settings.store.customScaleResolutionDownBy ?? 0));
+    const priority = settings.store.customPriority ?? "auto";
+    const networkPriority = settings.store.customNetworkPriority ?? "auto";
+    const degradation = settings.store.customDegradationPreference ?? "auto";
+
+    if (max > 0) encoding.maxBitrate = max;
+    if (maxFps > 0) encoding.maxFramerate = maxFps;
+    if (scale >= 1) encoding.scaleResolutionDownBy = scale;
+    if (priority !== "auto") encoding.priority = priority as RTCPriorityType;
+    if (networkPriority !== "auto") {
+        (encoding as RTCRtpEncodingParameters & { networkPriority?: RTCPriorityType; }).networkPriority = networkPriority as RTCPriorityType;
+    }
+    if (degradation !== "auto") parameters.degradationPreference = degradation as RTCDegradationPreference;
+
+    return parameters;
+}
+
 async function applyCustomSenderParameters(sender: RTCRtpSender) {
     if (!isCustomScreenSender(sender)) return;
 
     try {
-        const parameters = sender.getParameters();
+        const parameters = mergeCustomSenderParameters(sender, sender.getParameters());
         if (!parameters.encodings?.length) return;
-
-        const encoding = parameters.encodings.reduce((best, current) => {
-            const bestScale = best.scaleResolutionDownBy ?? 1;
-            const currentScale = current.scaleResolutionDownBy ?? 1;
-            return currentScale < bestScale ? current : best;
-        });
-
-        const { max } = getCustomBitrates();
-        const maxFps = Math.max(0, Number(settings.store.customEncoderMaxFps ?? 0));
-        const scale = Math.max(0, Number(settings.store.customScaleResolutionDownBy ?? 0));
-        const priority = settings.store.customPriority ?? "auto";
-        const networkPriority = settings.store.customNetworkPriority ?? "auto";
-        const degradation = settings.store.customDegradationPreference ?? "auto";
-
-        if (max > 0) encoding.maxBitrate = max;
-        if (maxFps > 0) encoding.maxFramerate = maxFps;
-        if (scale >= 1) encoding.scaleResolutionDownBy = scale;
-        if (priority !== "auto") encoding.priority = priority as RTCPriorityType;
-        if (networkPriority !== "auto") {
-            (encoding as RTCRtpEncodingParameters & { networkPriority?: RTCPriorityType; }).networkPriority = networkPriority as RTCPriorityType;
-        }
-        if (degradation !== "auto") parameters.degradationPreference = degradation as RTCDegradationPreference;
-
         await sender.setParameters(parameters);
     } catch (error) {
         logger.debug("Could not apply one or more Custom WebRTC sender parameters.", error);
@@ -714,6 +724,40 @@ function installCustomWebRtcHooks() {
         }
 
         return result;
+    });
+
+    patchMethod(RTCRtpSender?.prototype, "setParameters", original => async function (
+        this: RTCRtpSender,
+        parameters: RTCRtpSendParameters
+    ) {
+        return original.call(this, mergeCustomSenderParameters(this, parameters));
+    });
+
+    patchMethod(RTCRtpTransceiver?.prototype, "setCodecPreferences", original => function (
+        this: RTCRtpTransceiver,
+        codecs: RTCRtpCodecCapability[]
+    ) {
+        const nextCodecs = isCustomScreenSender(this.sender)
+            ? preferSelectedCodec(codecs)
+            : codecs;
+        return original.call(this, nextCodecs);
+    });
+
+    patchMethod(RTCPeerConnection?.prototype, "createOffer", original => async function (
+        this: RTCPeerConnection,
+        options?: RTCOfferOptions
+    ) {
+        const customSenders: RTCRtpSender[] = [];
+
+        for (const transceiver of this.getTransceivers()) {
+            if (!isCustomScreenSender(transceiver.sender)) continue;
+            senderTransceivers.set(transceiver.sender, transceiver);
+            applyCustomCodecPreference(transceiver);
+            customSenders.push(transceiver.sender);
+        }
+
+        await Promise.all(customSenders.map(sender => applyCustomSenderParameters(sender)));
+        return original.call(this, options);
     });
 }
 
