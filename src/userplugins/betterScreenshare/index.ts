@@ -30,7 +30,8 @@ let overlayTimer: number | null = null;
 const settings = definePluginSettings({
     diagnosticsOverlay: {
         type: OptionType.BOOLEAN,
-        description: "Show a read-only live WebRTC screen-share diagnostics overlay",
+        displayName: "Diagnostics Overlay",
+        description: "Show live read-only WebRTC stats for the active screen share. This does not change capture, encoding, bitrate, FPS, scaling, or codecs.",
         default: false,
         onChange(value) {
             if (value) startOverlay();
@@ -39,7 +40,8 @@ const settings = definePluginSettings({
     },
     verboseLogging: {
         type: OptionType.BOOLEAN,
-        description: "Log observed screen-share sender/stat information without modifying the stream",
+        displayName: "Console Logging",
+        description: "Write observed screen-share sender and WebRTC stats to the console for troubleshooting. No stream settings are changed.",
         default: false
     }
 });
@@ -327,9 +329,10 @@ function stopOverlay() {
 
 export default definePlugin({
     name: "BetterScreenshare",
-    description: "Read-only WebRTC screen-share diagnostics. Does not modify capture, codecs, bitrate, FPS, scaling or encoder settings.",
+    description: "Read-only WebRTC screen-share diagnostics. Equicord and Discord retain full control of capture, codecs, bitrate, FPS, scaling, and encoder settings.",
     authors: [{ name: "Chaython", id: 1415804298771824740n }],
-    tags: ["Voice", "Media"],
+    tags: ["Voice", "Utility"],
+    searchTerms: ["WebRTC", "Screen Share", "Encoder", "Dropped Frames", "Diagnostics"],
     settings,
 
     start() {
