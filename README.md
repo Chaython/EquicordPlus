@@ -24,7 +24,7 @@ EquicordPlus currently includes the following extra user plugins under [`src/use
 | [AllConnectionsEnabled](src/userplugins/allConnectionsEnabled) | Enables all connection types exposed by Discord. |
 | [AutoDeleteDMs](src/userplugins/autoDeleteDms) | Automatically deletes DMs after a configurable amount of time. |
 | [AutoUnmute](src/userplugins/autoUnmute) | Automatically unmutes/undeafens after server mute/deafen when permissions allow it. |
-| [BigFileUpload](src/userplugins/bigFileUpload) | Sends oversized files through supported external upload providers from drag/drop, paste, or the upload button. |
+| [BigFileUpload](src/userplugins/bigFileUpload) | Sends oversized files through supported external upload providers from drag/drop, paste, or the upload button. |\n| [BetterMic](src/userplugins/betterMic) | Improves Chromium/WebRTC microphone quality by disabling echo cancellation, noise suppression, and AGC while preferring raw 48 kHz/stereo capture. |\n| [BetterScreenshare](src/userplugins/betterScreenshare) | Tunes screen-share capture and WebRTC sending for up to 60 FPS / 20 Mbps, maintain-resolution behavior, modern codec preference, and optional live diagnostics. |
 | [MessageCleaner](src/userplugins/messageCleaner) | Bulk message cleanup with rate-limit handling, statistics, and confirmation. |
 | [PasswordManager](src/userplugins/passwordManager) | Adds an in-client password-management vault. |
 | [SendToAllDMs](src/userplugins/sendtoalldms) | Adds a command for sending a message to multiple friend DMs with blacklist/whitelist controls. This can carry account-enforcement risk if abused. |
