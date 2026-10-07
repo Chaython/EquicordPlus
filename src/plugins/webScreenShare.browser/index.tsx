@@ -214,7 +214,7 @@ function OptionRadio<Settings extends object, Key extends keyof Settings, Option
 }
 
 function getSupportedVideoCodecNames() {
-    const capabilities = RTCRtpSender.getCapabilities?.("video");
+    const capabilities = RTCRtpReceiver.getCapabilities?.("video");
     const names = new Map<string, string>();
 
     for (const codec of capabilities?.codecs ?? []) {
@@ -591,7 +591,8 @@ function applyCustomCodecPreference(transceiver: RTCRtpTransceiver) {
     const selected = (settings.store.customCodec ?? "auto").toLowerCase();
     if (selected === "auto" || typeof transceiver.setCodecPreferences !== "function") return;
 
-    const codecs = RTCRtpSender.getCapabilities?.("video")?.codecs;
+    const codecs = transceiver.receiver.getCapabilities?.("video")?.codecs
+        ?? RTCRtpReceiver.getCapabilities?.("video")?.codecs;
     if (!codecs?.length) return;
 
     const sorted = [...codecs].sort((a, b) => {
@@ -741,10 +742,34 @@ export default definePlugin({
     patches: [
         {
             find: "this.getDefaultGoliveQuality()",
+            replacement: [
+                {
+                    match: /this\.getDefaultGoliveQuality\(\)/,
+                    replace: "$self.getGoliveMaxQuality(        {
+            find: "this.getDefaultGoliveQuality()",
             replacement: {
                 match: /this\.getDefaultGoliveQuality\(\)/,
                 replace: "$self.getGoliveMaxQuality($&)"
             }
+        },)"
+                },
+                {
+                    match: /setGoliveQuality\((\i)\)\{/,
+                    replace: "setGoliveQuality($1){$1=$self.patchGoliveArgs($1);",
+                    noWarn: true
+                },
+                {
+                    match: /(\i)\.encodingVideoMinBitRate=\i\.bitrateMin,\i\.encodingVideoMaxBitRate=\i\.bitrateMax/,
+                    replace: "        {
+            find: "this.getDefaultGoliveQuality()",
+            replacement: {
+                match: /this\.getDefaultGoliveQuality\(\)/,
+                replace: "$self.getGoliveMaxQuality($&)"
+            }
+        },;$self.patchEncodingVideoBitrates($1)",
+                    noWarn: true
+                }
+            ]
         },
         {
             find: "}setDesktopEncodingOptions(",
@@ -761,6 +786,27 @@ export default definePlugin({
         if (settings.store.contentHint !== "") return original;
         const interval = Math.max(0, Number(settings.store.customKeyframeIntervalMs ?? 0));
         return interval > 0 ? interval : original;
+    },
+
+    patchGoliveArgs(opts: any) {
+        if (settings.store.contentHint !== "" || !opts) return opts;
+
+        const bitrate = getCustomBitrates();
+        return {
+            ...opts,
+            ...(bitrate.min > 0 ? { bitrateMin: bitrate.min } : {}),
+            ...(bitrate.target > 0 ? { bitrateTarget: bitrate.target } : {}),
+            ...(bitrate.max > 0 ? { bitrateMax: bitrate.max } : {})
+        };
+    },
+
+    patchEncodingVideoBitrates(encoding: any) {
+        if (settings.store.contentHint !== "" || !encoding) return encoding;
+
+        const bitrate = getCustomBitrates();
+        if (bitrate.min > 0) encoding.encodingVideoMinBitRate = bitrate.min;
+        if (bitrate.max > 0) encoding.encodingVideoMaxBitRate = bitrate.max;
+        return encoding;
     },
 
     getGoliveMaxQuality(opts: any) {
