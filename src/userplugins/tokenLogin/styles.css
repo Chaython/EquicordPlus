@@ -1,22 +1,106 @@
-.token-login-modal-content {
-    padding: 16px;
+.ecp-token-tools {
+    margin: 0 0 12px;
+    padding: 12px;
+    border: 1px solid var(--border-subtle, var(--background-modifier-accent));
+    border-radius: 8px;
+    background: var(--background-secondary);
 }
 
-.token-login-section {
-    margin-bottom: 16px;
-}
-
-.token-login-footer {
-    padding: 16px;
-    background-color: var(--background-secondary);
-    border-top: 1px solid var(--background-modifier-accent);
-}
-
-.token-field {
-    -webkit-text-security: disc;
-}
-
-.account-actions {
+.ecp-token-tools-header {
     display: flex;
-    gap: 0.5em;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.ecp-token-tools-title {
+    color: var(--header-primary);
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 20px;
+}
+
+.ecp-token-tools-subtitle {
+    margin-top: 2px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 16px;
+}
+
+.ecp-token-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 70px;
+    max-height: 150px;
+    resize: vertical;
+    padding: 9px 10px;
+    border: 1px solid var(--input-border, var(--background-modifier-accent));
+    border-radius: 4px;
+    outline: none;
+    background: var(--input-background, var(--background-tertiary));
+    color: var(--text-normal);
+    font-family: var(--font-code);
+    font-size: 12px;
+    line-height: 16px;
+}
+
+.ecp-token-input:focus {
+    border-color: var(--brand-500);
+}
+
+.ecp-token-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.ecp-token-button {
+    min-height: 30px;
+    padding: 5px 10px;
+    border: 0;
+    border-radius: 4px;
+    color: var(--white-500, #fff);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.ecp-token-button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.ecp-token-button-primary {
+    background: var(--brand-500);
+}
+
+.ecp-token-button-primary:not(:disabled):hover {
+    background: var(--brand-560);
+}
+
+.ecp-token-button-secondary {
+    background: var(--button-secondary-background, var(--background-modifier-active));
+    color: var(--button-secondary-text, var(--text-normal));
+}
+
+.ecp-token-button-secondary:not(:disabled):hover {
+    background: var(--button-secondary-background-hover, var(--background-modifier-hover));
+}
+
+.ecp-token-button-danger {
+    background: var(--button-danger-background, var(--red-400));
+}
+
+.ecp-token-button-danger:not(:disabled):hover {
+    background: var(--button-danger-background-hover, var(--red-430));
+}
+
+.ecp-token-summary {
+    margin-top: 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 16px;
 }
