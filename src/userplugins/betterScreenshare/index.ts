@@ -547,9 +547,15 @@ function ensureOverlay() {
         background: "rgba(0, 0, 0, 0.78)",
         color: "#fff",
         font: "12px/1.45 monospace",
-        whiteSpace: "pre",
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+        wordBreak: "break-word",
         pointerEvents: "none",
-        maxWidth: "420px"
+        width: "min(560px, calc(100vw - 24px))",
+        maxWidth: "calc(100vw - 24px)",
+        maxHeight: "calc(100vh - 24px)",
+        overflowY: "auto",
+        boxSizing: "border-box"
     });
 
     document.body.appendChild(overlay);
