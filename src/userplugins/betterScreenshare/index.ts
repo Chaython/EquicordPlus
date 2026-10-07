@@ -126,7 +126,7 @@ function improveDisplayConstraints(constraints: DisplayMediaStreamOptions = {}):
     };
 }
 
-function orderedVideoCodecs(): RTCRtpCodecCapability[] {
+function orderedVideoCodecs() {
     if (!settings.store.preferModernCodecs || typeof RTCRtpSender.getCapabilities !== "function") return [];
     const codecs = RTCRtpSender.getCapabilities("video")?.codecs ?? [];
     const order = ["video/VP9", "video/AV1", "video/H264", "video/VP8"];
