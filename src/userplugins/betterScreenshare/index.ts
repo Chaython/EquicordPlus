@@ -25,6 +25,18 @@ const patches: MethodPatch[] = [];
 const trackedSenders = new Set<RTCRtpSender>();
 const senderPeerConnections = new WeakMap<RTCRtpSender, RTCPeerConnection>();
 const previousOutboundStats = new WeakMap<RTCRtpSender, PreviousOutboundStats>();
+const observedRtcSockets = new Map<WebSocket, EventListener>();
+
+interface RtcTraceState {
+    protocol?: string;
+    advertisedCodecs?: string;
+    serverSelectedCodec?: string;
+    sessionCodec?: string;
+    streamLimits?: string;
+    sinkWants?: string;
+}
+
+const rtcTrace: RtcTraceState = {};
 let overlay: HTMLDivElement | null = null;
 let overlayTimer: number | null = null;
 
@@ -112,6 +124,153 @@ function trackSender(sender: RTCRtpSender, peerConnection?: RTCPeerConnection) {
     if (settings.store.verboseLogging) {
         console.info("[BetterScreenshare] Observing screen-share sender:", sender);
     }
+}
+
+function formatCodecCapabilities(codecs: any) {
+    if (!Array.isArray(codecs) || codecs.length === 0) return undefined;
+
+    return codecs
+        .filter(codec => codec && typeof codec === "object")
+        .map(codec => {
+            const name = String(codec.name ?? "?");
+            const priority = codec.priority != null ? ` p=${codec.priority}` : "";
+            const encode = codec.encode == null ? "" : ` e=${codec.encode ? 1 : 0}`;
+            const decode = codec.decode == null ? "" : ` d=${codec.decode ? 1 : 0}`;
+            return `${name}[${priority.trim()}${encode}${decode}]`;
+        })
+        .join(" > ");
+}
+
+function formatStreamLimits(streams: any) {
+    if (!Array.isArray(streams) || streams.length === 0) return undefined;
+
+    return streams.map(stream => {
+        const quality = stream?.quality != null ? `q${stream.quality}` : "q?";
+        const bitrate = stream?.max_bitrate != null ? `${formatMbps(Number(stream.max_bitrate))} Mbps` : "? Mbps";
+        const fps = stream?.max_framerate != null ? `${stream.max_framerate} FPS` : "? FPS";
+        const resolution = stream?.max_resolution;
+        const size = resolution
+            ? `${resolution.width ?? "?"}×${resolution.height ?? "?"}`
+            : "?×?";
+        return `${quality}: ${size} @ ${fps}, max ${bitrate}`;
+    }).join(" | ");
+}
+
+function formatSinkWants(data: any) {
+    if (!data || typeof data !== "object") return undefined;
+
+    const entries = Object.entries(data)
+        .filter(([key]) => !["pixel_counts", "pixelCounts"].includes(key))
+        .slice(0, 8)
+        .map(([key, value]) => `${key}=${typeof value === "object" ? JSON.stringify(value) : String(value)}`);
+
+    const pixelCounts = data.pixel_counts ?? data.pixelCounts;
+    if (pixelCounts && typeof pixelCounts === "object") {
+        entries.push(`pixels=${JSON.stringify(pixelCounts)}`);
+    }
+
+    return entries.length ? entries.join(", ") : undefined;
+}
+
+function recordRtcMessage(direction: "in" | "out", op: number, data: any) {
+    if (!data || typeof data !== "object") return;
+
+    if (direction === "out" && op === 1 && typeof data.protocol === "string" && data.rtc_connection_id) {
+        rtcTrace.protocol = data.protocol;
+        rtcTrace.advertisedCodecs = formatCodecCapabilities(data.codecs);
+        rtcTrace.serverSelectedCodec = undefined;
+        rtcTrace.sessionCodec = undefined;
+        rtcTrace.streamLimits = undefined;
+        rtcTrace.sinkWants = undefined;
+    } else if (direction === "in" && op === 4) {
+        if (data.video_codec != null) rtcTrace.serverSelectedCodec = String(data.video_codec);
+    } else if (op === 14) {
+        if (direction === "in" && data.video_codec != null) {
+            rtcTrace.sessionCodec = String(data.video_codec);
+        } else if (direction === "out") {
+            const codecs = formatCodecCapabilities(data.codecs);
+            if (codecs) rtcTrace.advertisedCodecs = codecs;
+        }
+    } else if (direction === "out" && op === 12) {
+        const limits = formatStreamLimits(data.streams);
+        if (limits) rtcTrace.streamLimits = limits;
+    } else if (direction === "out" && op === 15) {
+        const wants = formatSinkWants(data);
+        if (wants) rtcTrace.sinkWants = wants;
+    }
+
+    if (settings.store.verboseLogging && [1, 4, 12, 14, 15].includes(op)) {
+        console.debug(`[BetterScreenshare] RTC OP ${op} ${direction}:`, {
+            protocol: rtcTrace.protocol,
+            advertisedCodecs: rtcTrace.advertisedCodecs,
+            serverSelectedCodec: rtcTrace.serverSelectedCodec,
+            sessionCodec: rtcTrace.sessionCodec,
+            streamLimits: rtcTrace.streamLimits,
+            sinkWants: rtcTrace.sinkWants
+        });
+    }
+}
+
+function observeRtcSocket(socket: WebSocket) {
+    if (observedRtcSockets.has(socket)) return;
+
+    const listener: EventListener = event => {
+        const message = event as MessageEvent;
+        if (typeof message.data !== "string") return;
+
+        try {
+            const parsed = JSON.parse(message.data);
+            if (typeof parsed?.op !== "number") return;
+            recordRtcMessage("in", parsed.op, parsed.d);
+        } catch {}
+    };
+
+    socket.addEventListener("message", listener);
+    observedRtcSockets.set(socket, listener);
+}
+
+function installRtcProtocolObserver() {
+    patchMethod(WebSocket?.prototype, "send", original => function (
+        this: WebSocket,
+        data: string | ArrayBufferLike | Blob | ArrayBufferView
+    ) {
+        if (typeof data === "string") {
+            try {
+                const parsed = JSON.parse(data);
+                if (typeof parsed?.op === "number") {
+                    const payload = parsed.d;
+
+                    // SELECT_PROTOCOL is a strong discriminator for Discord's RTC
+                    // control socket. We deliberately do not retain OP 0 auth data.
+                    if (
+                        (parsed.op === 1 && typeof payload?.protocol === "string" && payload?.rtc_connection_id)
+                        || observedRtcSockets.has(this)
+                    ) {
+                        observeRtcSocket(this);
+                        recordRtcMessage("out", parsed.op, payload);
+                    }
+                }
+            } catch {}
+        }
+
+        return original.call(this, data);
+    });
+}
+
+function stopRtcProtocolObserver() {
+    for (const [socket, listener] of observedRtcSockets) {
+        try {
+            socket.removeEventListener("message", listener);
+        } catch {}
+    }
+    observedRtcSockets.clear();
+
+    delete rtcTrace.protocol;
+    delete rtcTrace.advertisedCodecs;
+    delete rtcTrace.serverSelectedCodec;
+    delete rtcTrace.sessionCodec;
+    delete rtcTrace.streamLimits;
+    delete rtcTrace.sinkWants;
 }
 
 function installObserverHooks() {
@@ -221,6 +380,13 @@ async function collectDiagnostics() {
 
         const browserCodecs = getLocalVideoCodecCapabilities();
         if (browserCodecs.length) lines.push(`Browser codecs: ${browserCodecs.join(", ")}`);
+
+        if (rtcTrace.protocol) lines.push(`RTC protocol: ${rtcTrace.protocol}`);
+        if (rtcTrace.advertisedCodecs) lines.push(`RTC advertised: ${rtcTrace.advertisedCodecs}`);
+        if (rtcTrace.serverSelectedCodec) lines.push(`RTC selected: ${rtcTrace.serverSelectedCodec}`);
+        if (rtcTrace.sessionCodec) lines.push(`RTC session codec: ${rtcTrace.sessionCodec}`);
+        if (rtcTrace.streamLimits) lines.push(`RTC stream: ${rtcTrace.streamLimits}`);
+        if (rtcTrace.sinkWants) lines.push(`RTC sink wants: ${rtcTrace.sinkWants}`);
 
         const peerConnection = senderPeerConnections.get(sender);
         if (peerConnection) {
@@ -422,11 +588,13 @@ export default definePlugin({
     start() {
         restorePatches();
         installObserverHooks();
+        installRtcProtocolObserver();
         if (settings.store.diagnosticsOverlay) startOverlay();
     },
 
     stop() {
         stopOverlay();
+        stopRtcProtocolObserver();
         restorePatches();
         trackedSenders.clear();
     }
