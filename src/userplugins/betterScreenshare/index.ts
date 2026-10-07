@@ -240,10 +240,13 @@ async function collectDiagnostics() {
 
             lines.push(`Encoded: ${formatNumber(encodedFps)} FPS`);
             lines.push(`Encode time: ${formatNumber(encodeMsPerFrame)} ms/frame`);
-            lines.push(`Bitrate: ${formatMbps(sendBitrate)} Mbps${targetBitrate ? ` / target ${formatMbps(targetBitrate)}` : ""}`);
+            lines.push(`Bitrate: ${formatMbps(sendBitrate)} Mbps${targetBitrate ? ` / ceiling ${formatMbps(targetBitrate)}` : ""}`);
 
             if (mediaSource?.framesPerSecond != null) {
                 lines.push(`Source FPS: ${formatNumber(Number(mediaSource.framesPerSecond))}`);
+            }
+            if (outbound.framesPerSecond != null) {
+                lines.push(`Outbound FPS: ${formatNumber(Number(outbound.framesPerSecond))}`);
             }
             if (outbound.framesSent != null) lines.push(`Frames sent: ${outbound.framesSent}`);
             if (outbound.framesEncoded != null) lines.push(`Frames encoded: ${outbound.framesEncoded}`);
