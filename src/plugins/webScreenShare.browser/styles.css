@@ -80,67 +80,6 @@
         justify-content: center;
     }
 
-    .vc-screen-picker-advanced {
-        margin: var(--space-sm, 12px) 0;
-        padding: var(--space-md, 16px);
-        border: 1px solid var(--border-subtle, var(--control-primary-border-default));
-        border-radius: var(--radius-md, 8px);
-        background: var(--background-secondary-alt, var(--background-secondary));
-
-        > h2 {
-            margin-bottom: var(--space-4);
-        }
-    }
-
-    .vc-screen-picker-advanced-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: var(--space-12, 12px);
-        margin-top: var(--space-12, 12px);
-    }
-
-    .vc-screen-picker-advanced-field {
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-        gap: var(--space-4, 4px);
-
-        select,
-        input[type="number"] {
-            box-sizing: border-box;
-            width: 100%;
-            min-height: 36px;
-            padding: 6px 8px;
-            color: var(--text-normal);
-            background: var(--input-background, var(--background-tertiary));
-            border: 1px solid var(--input-border, var(--control-primary-border-default));
-            border-radius: var(--radius-xs, 4px);
-            outline: none;
-        }
-
-        select:focus,
-        input[type="number"]:focus {
-            border-color: var(--border-focus, var(--brand-500));
-        }
-    }
-
-    .vc-screen-picker-advanced-label {
-        color: var(--header-primary);
-        font-weight: 600;
-    }
-
-    .vc-screen-picker-advanced-description {
-        color: var(--text-muted);
-        font-size: 12px;
-        line-height: 1.3;
-    }
-
-    @media (max-width: 700px) {
-        .vc-screen-picker-advanced-grid {
-            grid-template-columns: 1fr;
-        }
-    }
-
     .vc-screen-picker-summary {
         display: flex;
         min-width: 0;
