@@ -29,7 +29,7 @@ EquicordPlus currently includes the following extra user plugins under [`src/use
 | [PasswordManager](src/userplugins/passwordManager) | Adds an in-client password-management vault. |
 | [SendToAllDMs](src/userplugins/sendtoalldms) | Adds a command for sending a message to multiple friend DMs with blacklist/whitelist controls. This can carry account-enforcement risk if abused. |
 | [SpoofSystemV2](src/userplugins/spoofmsgv2) | Locally creates realistic Discord-style system-message spoofs. |
-| [TokenLoginManager](src/userplugins/tokenLogin) | Saves/manages account tokens and provides token-based login. Treat stored tokens as highly sensitive credentials. |
+| [TokenLoginManager](src/userplugins/tokenLogin) | Integrates token import, validation, invalid-token cleanup, and legacy migration into Discord's native Switch Accounts / Manage Accounts flow. Imported tokens use Discord's per-user token storage; treat them as highly sensitive credentials. |
 | [FollowUser](src/userplugins/vc-followUser) | Adds a user-context action for following a user between voice channels. |
 | [IgnoreTerms](src/userplugins/vc-ignoreTerms) | Suppresses Discord's newer terms prompt/handling used by the plugin. |
 | [NotifyUserChanges](src/userplugins/vc-notifyUserChanges) | Adds notifications for selected users' voice-channel and online-status changes. |
