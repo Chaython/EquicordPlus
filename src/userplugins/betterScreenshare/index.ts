@@ -14,36 +14,23 @@ interface MethodPatch {
     replacement: Function;
 }
 
+interface PreviousOutboundStats {
+    bytesSent: number;
+    framesEncoded: number;
+    totalEncodeTime: number;
+    timestamp: number;
+}
+
 const patches: MethodPatch[] = [];
-const screenTracks = new WeakSet<MediaStreamTrack>();
 const trackedSenders = new Set<RTCRtpSender>();
-const previousOutboundStats = new WeakMap<RTCRtpSender, { bytesSent: number; timestamp: number; }>();
+const previousOutboundStats = new WeakMap<RTCRtpSender, PreviousOutboundStats>();
 let overlay: HTMLDivElement | null = null;
 let overlayTimer: number | null = null;
 
-const MAX_BITRATE = 20_000_000;
-const MAX_FRAMERATE = 60;
-const CONTENT_HINT = "detail";
-
 const settings = definePluginSettings({
-    improveCapture: {
-        type: OptionType.BOOLEAN,
-        description: "Prefer detailed screen capture without overriding Discord's selected resolution or aspect ratio",
-        default: true
-    },
-    tuneSender: {
-        type: OptionType.BOOLEAN,
-        description: "Raise WebRTC bitrate/FPS ceilings without overriding Discord's scaling or resolution decisions",
-        default: true
-    },
-    preferModernCodecs: {
-        type: OptionType.BOOLEAN,
-        description: "Prefer VP9, then AV1, H.264 and VP8 when Discord/Chromium exposes codec preferences",
-        default: true
-    },
     diagnosticsOverlay: {
         type: OptionType.BOOLEAN,
-        description: "Show a live screen-share diagnostics overlay",
+        description: "Show a read-only live WebRTC screen-share diagnostics overlay",
         default: false,
         onChange(value) {
             if (value) startOverlay();
@@ -52,7 +39,7 @@ const settings = definePluginSettings({
     },
     verboseLogging: {
         type: OptionType.BOOLEAN,
-        description: "Log screen-share capture/sender tuning details to the console",
+        description: "Log observed screen-share sender/stat information without modifying the stream",
         default: false
     }
 });
@@ -73,7 +60,9 @@ function patchMethod(target: any, key: string, createReplacement: (original: Fun
         });
         patches.push({ target, key, hadOwn, descriptor, replacement });
     } catch (error) {
-        console.warn(`[BetterScreenshare] Could not patch ${key}:`, error);
+        if (settings.store.verboseLogging) {
+            console.debug(`[BetterScreenshare] Could not observe ${key}:`, error);
+        }
     }
 }
 
@@ -88,140 +77,47 @@ function restorePatches() {
                 delete patch.target[patch.key];
             }
         } catch (error) {
-            console.warn(`[BetterScreenshare] Could not restore ${patch.key}:`, error);
+            if (settings.store.verboseLogging) {
+                console.debug(`[BetterScreenshare] Could not restore ${patch.key}:`, error);
+            }
         }
     }
 }
 
-function markScreenTrack(track: MediaStreamTrack) {
-    if (track.kind !== "video") return;
-    screenTracks.add(track);
+function isLikelyScreenTrack(track: MediaStreamTrack | null | undefined) {
+    if (!track || track.kind !== "video") return false;
+
     try {
-        if (settings.store.improveCapture) track.contentHint = CONTENT_HINT;
+        const settings = track.getSettings() as MediaTrackSettings & { displaySurface?: string; };
+        if (settings.displaySurface) return true;
     } catch {}
 
-    track.addEventListener("ended", () => {
-        for (const sender of [...trackedSenders]) {
-            if (sender.track === track) trackedSenders.delete(sender);
-        }
-    }, { once: true });
+    return /screen|window|desktop|display|monitor/i.test(track.label);
 }
 
-function improveDisplayConstraints(constraints: DisplayMediaStreamOptions = {}): DisplayMediaStreamOptions {
-    // Do not replace Discord's capture dimensions, aspect ratio, resizeMode,
-    // or explicit frame-rate choice. Rewriting capture constraints can make
-    // Chromium renegotiate between Discord's layer geometry and ours, which
-    // presents as stretched frames or rapid native/stretched flicker.
-    if (!settings.store.improveCapture) return constraints;
-
-    const originalVideo = constraints.video;
-    if (originalVideo === false || !originalVideo || typeof originalVideo !== "object") {
-        return constraints;
-    }
-
-    return {
-        ...constraints,
-        video: { ...originalVideo }
-    };
-}
-
-function orderedVideoCodecs() {
-    if (!settings.store.preferModernCodecs || typeof RTCRtpSender.getCapabilities !== "function") return [];
-    const codecs = RTCRtpSender.getCapabilities("video")?.codecs ?? [];
-    const order = ["video/VP9", "video/AV1", "video/H264", "video/VP8"];
-
-    return [...codecs].sort((a, b) => {
-        const ai = order.indexOf(a.mimeType);
-        const bi = order.indexOf(b.mimeType);
-        return (ai < 0 ? order.length : ai) - (bi < 0 ? order.length : bi);
-    });
-}
-
-async function tuneSender(sender: RTCRtpSender) {
-    const track = sender.track;
-    if (!track || track.kind !== "video" || !screenTracks.has(track)) return;
-
+function trackSender(sender: RTCRtpSender) {
+    if (!isLikelyScreenTrack(sender.track)) return;
     trackedSenders.add(sender);
-    if (!settings.store.tuneSender) return;
 
-    try {
-        const parameters = sender.getParameters();
-        const encodings = parameters.encodings;
+    const track = sender.track!;
+    track.addEventListener("ended", () => {
+        trackedSenders.delete(sender);
+        previousOutboundStats.delete(sender);
+    }, { once: true });
 
-        // Never manufacture an encoding or rewrite scaleResolutionDownBy.
-        // Discord uses its encoding layers to preserve source geometry and to
-        // move between quality levels. Forcing a layer to scale=1 can make the
-        // encoder alternate between incompatible dimensions.
-        if (!encodings?.length) return;
-
-        // Boost only the existing highest-resolution layer. Lower simulcast
-        // layers keep Discord's own bitrate/FPS limits so fallback/adaptation
-        // behaviour remains intact and the 20 Mbps target stays a stream
-        // ceiling rather than being applied independently to every layer.
-        const highestResolutionEncoding = encodings.reduce((best, encoding) => {
-            const bestScale = best.scaleResolutionDownBy ?? 1;
-            const encodingScale = encoding.scaleResolutionDownBy ?? 1;
-            return encodingScale < bestScale ? encoding : best;
-        });
-
-        highestResolutionEncoding.maxBitrate = Math.max(highestResolutionEncoding.maxBitrate ?? 0, MAX_BITRATE);
-        highestResolutionEncoding.maxFramerate = Math.max(highestResolutionEncoding.maxFramerate ?? 0, MAX_FRAMERATE);
-        highestResolutionEncoding.priority = "high";
-        highestResolutionEncoding.networkPriority = "high";
-
-        parameters.encodings = encodings;
-
-        await sender.setParameters(parameters);
-
-        if (settings.store.verboseLogging) {
-            console.info("[BetterScreenshare] Tuned sender:", sender.getParameters());
-        }
-    } catch (error) {
-        if (settings.store.verboseLogging) {
-            console.debug("[BetterScreenshare] Sender tuning was not fully accepted:", error);
-        }
+    if (settings.store.verboseLogging) {
+        console.info("[BetterScreenshare] Observing screen-share sender:", sender);
     }
 }
 
-function applyCodecPreferences(transceiver: RTCRtpTransceiver) {
-    if (!settings.store.preferModernCodecs || typeof transceiver.setCodecPreferences !== "function") return;
-    const codecs = orderedVideoCodecs();
-    if (!codecs.length) return;
-
-    try {
-        transceiver.setCodecPreferences(codecs);
-    } catch (error) {
-        if (settings.store.verboseLogging) {
-            console.debug("[BetterScreenshare] Codec preference rejected:", error);
-        }
-    }
-}
-
-function installHooks() {
-    const mediaDevices = navigator.mediaDevices;
-    if (mediaDevices) {
-        patchMethod(mediaDevices, "getDisplayMedia", original => async function (
-            this: MediaDevices,
-            constraints: DisplayMediaStreamOptions = {}
-        ) {
-            const modified = improveDisplayConstraints(constraints);
-            if (settings.store.verboseLogging) {
-                console.debug("[BetterScreenshare] getDisplayMedia:", constraints, "=>", modified);
-            }
-
-            const stream = await original.call(this, modified) as MediaStream;
-            for (const track of stream.getVideoTracks()) markScreenTrack(track);
-            return stream;
-        });
-    }
-
+function installObserverHooks() {
     patchMethod(RTCPeerConnection?.prototype, "addTrack", original => function (
         this: RTCPeerConnection,
         track: MediaStreamTrack,
         ...streams: MediaStream[]
     ) {
         const sender = original.call(this, track, ...streams) as RTCRtpSender;
-        if (track.kind === "video" && screenTracks.has(track)) void tuneSender(sender);
+        trackSender(sender);
         return sender;
     });
 
@@ -231,13 +127,7 @@ function installHooks() {
         init?: RTCRtpTransceiverInit
     ) {
         const transceiver = original.call(this, trackOrKind, init) as RTCRtpTransceiver;
-        const track = typeof trackOrKind === "string" ? null : trackOrKind;
-
-        if (track?.kind === "video" && screenTracks.has(track)) {
-            applyCodecPreferences(transceiver);
-            void tuneSender(transceiver.sender);
-        }
-
+        trackSender(transceiver.sender);
         return transceiver;
     });
 
@@ -246,9 +136,14 @@ function installHooks() {
         withTrack: MediaStreamTrack | null
     ) {
         const result = await original.call(this, withTrack);
-        if (withTrack?.kind === "video" && screenTracks.has(withTrack)) {
-            void tuneSender(this);
+
+        if (isLikelyScreenTrack(withTrack)) {
+            trackSender(this);
+        } else {
+            trackedSenders.delete(this);
+            previousOutboundStats.delete(this);
         }
+
         return result;
     });
 }
@@ -257,63 +152,126 @@ function formatMbps(value?: number) {
     return value == null || !Number.isFinite(value) ? "—" : (value / 1_000_000).toFixed(2);
 }
 
-async function collectDiagnostics() {
-    const lines: string[] = ["Better Screenshare"];
+function formatNumber(value?: number, digits = 1) {
+    return value == null || !Number.isFinite(value) ? "—" : value.toFixed(digits);
+}
 
-    for (const sender of trackedSenders) {
+async function collectDiagnostics() {
+    const lines: string[] = ["Screen-share diagnostics"];
+
+    for (const sender of [...trackedSenders]) {
         const track = sender.track;
-        if (!track || track.readyState === "ended" || !screenTracks.has(track)) {
+        if (!track || track.readyState === "ended" || !isLikelyScreenTrack(track)) {
             trackedSenders.delete(sender);
+            previousOutboundStats.delete(sender);
             continue;
         }
 
-        const s = track.getSettings();
-        lines.push(`${s.width ?? "?"}×${s.height ?? "?"} @ ${s.frameRate ?? "?"} FPS`);
-
-        const params = sender.getParameters();
-        const target = params.encodings?.[params.encodings.length - 1]?.maxBitrate;
-        lines.push(`Target: ${formatMbps(target)} Mbps`);
+        const trackSettings = track.getSettings();
+        lines.push(`Capture: ${trackSettings.width ?? "?"}×${trackSettings.height ?? "?"} @ ${trackSettings.frameRate ?? "?"} FPS`);
 
         try {
             const stats = await sender.getStats();
             let outbound: any = null;
             let codec: any = null;
             let remoteInbound: any = null;
+            let mediaSource: any = null;
 
             stats.forEach(report => {
-                if (report.type === "outbound-rtp" && report.kind === "video") outbound = report;
-                else if (report.type === "codec") codec = codec ?? report;
-                else if (report.type === "remote-inbound-rtp") remoteInbound = report;
+                if (report.type === "outbound-rtp" && (report.kind === "video" || report.mediaType === "video")) {
+                    if (!outbound || Number(report.bytesSent ?? 0) > Number(outbound.bytesSent ?? 0)) outbound = report;
+                } else if (report.type === "remote-inbound-rtp") {
+                    remoteInbound = report;
+                } else if (report.type === "media-source" && report.kind === "video") {
+                    mediaSource = report;
+                }
             });
 
-            if (outbound) {
-                const now = Number(outbound.timestamp ?? performance.now());
-                const bytesSent = Number(outbound.bytesSent ?? 0);
-                const previous = previousOutboundStats.get(sender);
-                let sendBitrate: number | undefined;
-
-                if (previous && now > previous.timestamp && bytesSent >= previous.bytesSent) {
-                    sendBitrate = ((bytesSent - previous.bytesSent) * 8 * 1000) / (now - previous.timestamp);
-                }
-                previousOutboundStats.set(sender, { bytesSent, timestamp: now });
-
-                lines.push(`Send/target: ${formatMbps(sendBitrate)} / ${formatMbps(target)} Mbps`);
-                if (outbound.qualityLimitationReason) lines.push(`Quality limit: ${outbound.qualityLimitationReason}`);
-                if (outbound.qpSum != null && outbound.framesEncoded) {
-                    lines.push(`Avg QP: ${(outbound.qpSum / outbound.framesEncoded).toFixed(1)}`);
-                }
-                if (outbound.encoderImplementation) lines.push(`Encoder: ${outbound.encoderImplementation}`);
-                if (outbound.powerEfficientEncoder != null) {
-                    lines.push(`Power-efficient: ${outbound.powerEfficientEncoder ? "yes" : "no"}`);
-                }
-                if (outbound.scalabilityMode) lines.push(`Scalability: ${outbound.scalabilityMode}`);
+            if (!outbound) {
+                lines.push("No outbound RTP stats yet");
+                break;
             }
 
-            if (outbound?.codecId) codec = stats.get(outbound.codecId) ?? codec;
+            if (outbound.codecId) codec = stats.get(outbound.codecId);
+
+            const now = Number(outbound.timestamp ?? performance.now());
+            const bytesSent = Number(outbound.bytesSent ?? 0);
+            const framesEncoded = Number(outbound.framesEncoded ?? 0);
+            const totalEncodeTime = Number(outbound.totalEncodeTime ?? 0);
+            const previous = previousOutboundStats.get(sender);
+
+            let sendBitrate: number | undefined;
+            let encodedFps: number | undefined;
+            let encodeMsPerFrame: number | undefined;
+
+            if (previous && now > previous.timestamp) {
+                const elapsedMs = now - previous.timestamp;
+
+                if (bytesSent >= previous.bytesSent) {
+                    sendBitrate = ((bytesSent - previous.bytesSent) * 8 * 1000) / elapsedMs;
+                }
+
+                const frameDelta = framesEncoded - previous.framesEncoded;
+                if (frameDelta >= 0) {
+                    encodedFps = frameDelta * 1000 / elapsedMs;
+
+                    const encodeTimeDelta = totalEncodeTime - previous.totalEncodeTime;
+                    if (frameDelta > 0 && encodeTimeDelta >= 0) {
+                        encodeMsPerFrame = encodeTimeDelta * 1000 / frameDelta;
+                    }
+                }
+            }
+
+            previousOutboundStats.set(sender, {
+                bytesSent,
+                framesEncoded,
+                totalEncodeTime,
+                timestamp: now
+            });
+
+            const params = sender.getParameters();
+            const encodingTargets = params.encodings ?? [];
+            const targetBitrate = encodingTargets.reduce(
+                (max, encoding) => Math.max(max, Number(encoding.maxBitrate ?? 0)),
+                0
+            ) || undefined;
+
+            lines.push(`Encoded: ${formatNumber(encodedFps)} FPS`);
+            lines.push(`Encode time: ${formatNumber(encodeMsPerFrame)} ms/frame`);
+            lines.push(`Bitrate: ${formatMbps(sendBitrate)} Mbps${targetBitrate ? ` / target ${formatMbps(targetBitrate)}` : ""}`);
+
+            if (mediaSource?.framesPerSecond != null) {
+                lines.push(`Source FPS: ${formatNumber(Number(mediaSource.framesPerSecond))}`);
+            }
+            if (outbound.framesSent != null) lines.push(`Frames sent: ${outbound.framesSent}`);
+            if (outbound.framesEncoded != null) lines.push(`Frames encoded: ${outbound.framesEncoded}`);
+            if (outbound.framesDropped != null) lines.push(`Frames dropped: ${outbound.framesDropped}`);
+            if (outbound.qualityLimitationReason) lines.push(`Quality limit: ${outbound.qualityLimitationReason}`);
+            if (outbound.qualityLimitationDurations) {
+                const d = outbound.qualityLimitationDurations;
+                lines.push(`Limit seconds — CPU: ${formatNumber(Number(d.cpu ?? 0))}, bandwidth: ${formatNumber(Number(d.bandwidth ?? 0))}`);
+            }
+            if (outbound.qpSum != null && outbound.framesEncoded) {
+                lines.push(`Avg QP: ${formatNumber(outbound.qpSum / outbound.framesEncoded)}`);
+            }
             if (codec?.mimeType) lines.push(`Codec: ${codec.mimeType.replace("video/", "")}`);
-            if (remoteInbound?.roundTripTime != null) lines.push(`RTT: ${Math.round(remoteInbound.roundTripTime * 1000)} ms`);
-            if (remoteInbound?.fractionLost != null) lines.push(`Loss: ${(remoteInbound.fractionLost * 100).toFixed(2)}%`);
-        } catch {}
+            if (outbound.encoderImplementation) lines.push(`Encoder: ${outbound.encoderImplementation}`);
+            if (outbound.powerEfficientEncoder != null) {
+                lines.push(`Power-efficient: ${outbound.powerEfficientEncoder ? "yes" : "no"}`);
+            }
+            if (outbound.scalabilityMode) lines.push(`Scalability: ${outbound.scalabilityMode}`);
+            if (remoteInbound?.roundTripTime != null) {
+                lines.push(`RTT: ${Math.round(remoteInbound.roundTripTime * 1000)} ms`);
+            }
+            if (remoteInbound?.fractionLost != null) {
+                lines.push(`Loss: ${(remoteInbound.fractionLost * 100).toFixed(2)}%`);
+            }
+        } catch (error) {
+            lines.push("Stats unavailable");
+            if (settings.store.verboseLogging) {
+                console.debug("[BetterScreenshare] Could not read sender stats:", error);
+            }
+        }
 
         break;
     }
@@ -339,7 +297,7 @@ function ensureOverlay() {
         font: "12px/1.45 monospace",
         whiteSpace: "pre",
         pointerEvents: "none",
-        maxWidth: "360px"
+        maxWidth: "420px"
     });
 
     document.body.appendChild(overlay);
@@ -348,13 +306,14 @@ function ensureOverlay() {
 
 async function refreshOverlay() {
     if (!settings.store.diagnosticsOverlay) return;
-    const el = ensureOverlay();
-    el.textContent = await collectDiagnostics();
+    const element = ensureOverlay();
+    element.textContent = await collectDiagnostics();
 }
 
 function startOverlay() {
     stopOverlay();
     if (!settings.store.diagnosticsOverlay) return;
+
     void refreshOverlay();
     overlayTimer = window.setInterval(() => void refreshOverlay(), 1000);
 }
@@ -368,14 +327,14 @@ function stopOverlay() {
 
 export default definePlugin({
     name: "BetterScreenshare",
-    description: "Improves WebRTC screen sharing with higher-quality capture/sender tuning, codec preferences and optional live diagnostics.",
+    description: "Read-only WebRTC screen-share diagnostics. Does not modify capture, codecs, bitrate, FPS, scaling or encoder settings.",
     authors: [{ name: "Chaython", id: 1415804298771824740n }],
     tags: ["Voice", "Media"],
     settings,
 
     start() {
         restorePatches();
-        installHooks();
+        installObserverHooks();
         if (settings.store.diagnosticsOverlay) startOverlay();
     },
 
