@@ -37,8 +37,12 @@ export default definePlugin({
         if (!channelId) return;
 
         const guildId = ChannelStore.getChannel(channelId)?.guild_id;
-        const isSpeaking = ChannelRTCStore.getSpeakingParticipants(channelId).some(p => p.user.id === participantUserId && p.speaking);
+        // Discord may not have speaking participants ready while joining a call.
+        const isSpeaking = ChannelRTCStore.getSpeakingParticipants(channelId)?.some(
+            p => p.user?.id === participantUserId && p.speaking
+        ) ?? false;
         const avatarUrl = getUserAvatarUrl(user, guildId, isSpeaking, 1024);
+        if (!avatarUrl) return;
 
         return {
             "--full-res-avatar": `url(${avatarUrl})`
