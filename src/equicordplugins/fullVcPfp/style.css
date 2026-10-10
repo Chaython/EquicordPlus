@@ -2,10 +2,19 @@ div[data-selenium-video-tile] div[role="img"] {
     width: 100% !important;
     height: 100% !important;
     border-radius: unset !important;
-    background: center / contain no-repeat;
-    background-image: var(--full-res-avatar);
+    position: relative;
+}
 
-    > * {
-        display: none;
-    }
+/*
+ * Render the enlarged avatar over Discord's native avatar instead of hiding
+ * the native content. If the webpack patch does not inject the variable, or
+ * the larger CDN image fails to load, the original profile image stays visible.
+ */
+div[data-selenium-video-tile] div[role="img"]::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: center / contain no-repeat;
+    background-image: var(--full-res-avatar, none);
 }
