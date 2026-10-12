@@ -44,6 +44,7 @@ interface ViewState {
     y: number;
     mirroredX: boolean;
     geometry: GeometrySnapshot | null;
+    stylesApplied: boolean;
     originalTranslate: StyleSnapshot;
     originalScale: StyleSnapshot;
     originalTransformOrigin: StyleSnapshot;
@@ -211,13 +212,37 @@ function getDiscordVideoTile(target: EventTarget | null): HTMLElement | null {
     return target.closest<HTMLElement>(TILE_SELECTOR);
 }
 
+function isRenderableVideo(video: HTMLVideoElement): boolean {
+    // Discord can retain the old video's geometry while swapping its stream.
+    if (video.readyState < HTMLMediaElement.HAVE_METADATA || video.videoWidth <= 0 || video.videoHeight <= 0) return false;
+    const source = video.srcObject;
+    if (source instanceof MediaStream) return source.getVideoTracks().some(track => track.readyState === "live");
+    return !!source || !!video.currentSrc;
+}
+
 function getVisibleVideo(container: HTMLElement): HTMLVideoElement | null {
-    const videos = container.querySelectorAll<HTMLVideoElement>("video");
-    for (const video of videos) {
+    let best: HTMLVideoElement | null = null;
+    let bestScore = -Infinity;
+
+    // During a camera switch Discord may temporarily retain the old video
+    // alongside the new one. Prefer visible, live, decoded media and, on
+    // equal scores, the newer element.
+    for (const video of container.querySelectorAll<HTMLVideoElement>("video")) {
         const rect = video.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) return video;
+        const style = getComputedStyle(video);
+        const visible = rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+        const source = video.srcObject;
+        const tracks = source instanceof MediaStream ? source.getVideoTracks() : [];
+        const live = tracks.some(track => track.readyState === "live");
+        const ended = tracks.length > 0 && !live;
+        const score = (visible ? 16 : 0) + (live ? 16 : 0) + (isRenderableVideo(video) ? 8 : 0)
+            + (source || video.currentSrc ? 2 : 0) - (ended ? 64 : 0);
+        if (score >= bestScore) {
+            bestScore = score;
+            best = video;
+        }
     }
-    return videos[0] ?? null;
+    return best;
 }
 
 function getVideoContext(target: EventTarget | null): VideoContext | null {
@@ -437,6 +462,7 @@ function createState(video: HTMLVideoElement, container: HTMLElement, key: strin
         y: 0,
         mirroredX: isMirrored(video),
         geometry: null,
+        stylesApplied: false,
         originalTranslate: getStyleSnapshot(video, "translate"),
         originalScale: getStyleSnapshot(video, "scale"),
         originalTransformOrigin: getStyleSnapshot(video, "transform-origin"),
@@ -509,6 +535,21 @@ function getState(video: HTMLVideoElement, container: HTMLElement) {
 }
 
 function applyNow(video: HTMLVideoElement, state: ViewState) {
+    if (!isRenderableVideo(video)) {
+        if (state.stylesApplied) {
+            restoreAspectRatioStyles(state);
+            restoreStyle(video, "translate", state.originalTranslate);
+            restoreStyle(video, "scale", state.originalScale);
+            restoreStyle(video, "transform-origin", state.originalTransformOrigin);
+            restoreStyle(video, "will-change", state.originalWillChange);
+            restoreStyle(state.container, "overflow", state.originalOverflow);
+            restoreStyle(state.container, "cursor", state.originalCursor);
+            state.stylesApplied = false;
+        }
+        return;
+    }
+
+    state.stylesApplied = true;
     if (shouldFitAspectRatio(state)) applyAspectRatioFit(state);
     else restoreAspectRatioStyles(state);
 
