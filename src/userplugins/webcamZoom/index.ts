@@ -44,6 +44,10 @@ interface ViewState {
     y: number;
     mirroredX: boolean;
     geometry: GeometrySnapshot | null;
+    stylesApplied: boolean;
+    sourceStream: MediaStream | null;
+    sourceTracks: MediaStreamTrack[];
+    sourceSignature: string;
     originalTranslate: StyleSnapshot;
     originalScale: StyleSnapshot;
     originalTransformOrigin: StyleSnapshot;
@@ -211,13 +215,37 @@ function getDiscordVideoTile(target: EventTarget | null): HTMLElement | null {
     return target.closest<HTMLElement>(TILE_SELECTOR);
 }
 
+function isRenderableVideo(video: HTMLVideoElement): boolean {
+    // Discord can retain the old video's geometry while swapping its stream.
+    if (video.readyState < HTMLMediaElement.HAVE_METADATA || video.videoWidth <= 0 || video.videoHeight <= 0) return false;
+    const source = video.srcObject;
+    if (source instanceof MediaStream) return source.getVideoTracks().some(track => track.readyState === "live");
+    return !!source || !!video.currentSrc;
+}
+
 function getVisibleVideo(container: HTMLElement): HTMLVideoElement | null {
-    const videos = container.querySelectorAll<HTMLVideoElement>("video");
-    for (const video of videos) {
+    let best: HTMLVideoElement | null = null;
+    let bestScore = -Infinity;
+
+    // During a camera switch Discord may temporarily retain the old video
+    // alongside the new one. Prefer visible, live, decoded media and, on
+    // equal scores, the newer element.
+    for (const video of container.querySelectorAll<HTMLVideoElement>("video")) {
         const rect = video.getBoundingClientRect();
-        if (rect.width > 0 && rect.height > 0) return video;
+        const style = getComputedStyle(video);
+        const visible = rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+        const source = video.srcObject;
+        const tracks = source instanceof MediaStream ? source.getVideoTracks() : [];
+        const live = tracks.some(track => track.readyState === "live");
+        const ended = tracks.length > 0 && !live;
+        const score = (visible ? 16 : 0) + (live ? 16 : 0) + (isRenderableVideo(video) ? 8 : 0)
+            + (source || video.currentSrc ? 2 : 0) - (ended ? 64 : 0);
+        if (score >= bestScore) {
+            bestScore = score;
+            best = video;
+        }
     }
-    return videos[0] ?? null;
+    return best;
 }
 
 function getVideoContext(target: EventTarget | null): VideoContext | null {
@@ -427,6 +455,48 @@ function onManagedVideoResize(event: Event) {
     if (fullscreenSession?.sourceVideo === state.video) syncFullscreenMedia(fullscreenSession);
 }
 
+function onManagedTrackChange(event: Event) {
+    for (const video of activeVideos) {
+        const state = states.get(video);
+        if (!state || (state.sourceStream !== event.target && !state.sourceTracks.includes(event.target as MediaStreamTrack))) continue;
+        invalidateGeometry(state);
+        queueTile(state.container);
+    }
+}
+
+function releaseManagedTracks(state: ViewState) {
+    state.sourceStream?.removeEventListener("addtrack", onManagedTrackChange);
+    state.sourceStream?.removeEventListener("removetrack", onManagedTrackChange);
+    for (const track of state.sourceTracks) {
+        track.removeEventListener("ended", onManagedTrackChange);
+        track.removeEventListener("mute", onManagedTrackChange);
+        track.removeEventListener("unmute", onManagedTrackChange);
+    }
+    state.sourceStream = null;
+    state.sourceTracks = [];
+}
+
+function refreshManagedTracks(state: ViewState) {
+    const stream = state.video.srcObject instanceof MediaStream ? state.video.srcObject : null;
+    const tracks = stream?.getVideoTracks() ?? [];
+    const signature = stream ? stream.id + ":" + getVideoTrackSignature(stream) : (state.video.currentSrc || "");
+    if (state.sourceStream === stream && state.sourceSignature === signature
+        && tracks.length === state.sourceTracks.length && tracks.every((track, i) => track === state.sourceTracks[i])) return;
+
+    releaseManagedTracks(state);
+    state.sourceStream = stream;
+    state.sourceTracks = tracks;
+    state.sourceSignature = signature;
+    stream?.addEventListener("addtrack", onManagedTrackChange);
+    stream?.addEventListener("removetrack", onManagedTrackChange);
+    for (const track of tracks) {
+        track.addEventListener("ended", onManagedTrackChange);
+        track.addEventListener("mute", onManagedTrackChange);
+        track.addEventListener("unmute", onManagedTrackChange);
+    }
+    invalidateGeometry(state);
+}
+
 function createState(video: HTMLVideoElement, container: HTMLElement, key: string): ViewState {
     const state: ViewState = {
         key,
@@ -437,6 +507,10 @@ function createState(video: HTMLVideoElement, container: HTMLElement, key: strin
         y: 0,
         mirroredX: isMirrored(video),
         geometry: null,
+        stylesApplied: false,
+        sourceStream: null,
+        sourceTracks: [],
+        sourceSignature: "",
         originalTranslate: getStyleSnapshot(video, "translate"),
         originalScale: getStyleSnapshot(video, "scale"),
         originalTransformOrigin: getStyleSnapshot(video, "transform-origin"),
@@ -459,6 +533,7 @@ function createState(video: HTMLVideoElement, container: HTMLElement, key: strin
 
     states.set(video, state);
     activeVideos.add(video);
+    refreshManagedTracks(state);
     video.addEventListener("resize", onManagedVideoResize);
     resizeObserver?.observe(container);
     loadSavedState(state);
@@ -467,6 +542,7 @@ function createState(video: HTMLVideoElement, container: HTMLElement, key: strin
 
 function restoreElement(video: HTMLVideoElement, state: ViewState) {
     video.removeEventListener("resize", onManagedVideoResize);
+    releaseManagedTracks(state);
     pendingApplyVideos.delete(video);
 
     restoreStyle(video, "translate", state.originalTranslate);
@@ -504,11 +580,27 @@ function getState(video: HTMLVideoElement, container: HTMLElement) {
     }
 
     const state = states.get(video) ?? createState(video, container, key);
+    refreshManagedTracks(state);
     state.mirroredX = isMirrored(video);
     return state;
 }
 
 function applyNow(video: HTMLVideoElement, state: ViewState) {
+    if (!isRenderableVideo(video)) {
+        if (state.stylesApplied) {
+            restoreAspectRatioStyles(state);
+            restoreStyle(video, "translate", state.originalTranslate);
+            restoreStyle(video, "scale", state.originalScale);
+            restoreStyle(video, "transform-origin", state.originalTransformOrigin);
+            restoreStyle(video, "will-change", state.originalWillChange);
+            restoreStyle(state.container, "overflow", state.originalOverflow);
+            restoreStyle(state.container, "cursor", state.originalCursor);
+            state.stylesApplied = false;
+        }
+        return;
+    }
+
+    state.stylesApplied = true;
     if (shouldFitAspectRatio(state)) applyAspectRatioFit(state);
     else restoreAspectRatioStyles(state);
 
@@ -768,7 +860,9 @@ function getVideoTrackSignature(stream: MediaStream) {
 }
 
 function onFullscreenStreamChanged() {
-    if (fullscreenSession) syncFullscreenMedia(fullscreenSession);
+    if (!fullscreenSession) return;
+    scheduleVideoScan();
+    syncFullscreenMedia(fullscreenSession);
 }
 
 function bindFullscreenTracks(session: FullscreenSession, tracks: MediaStreamTrack[]) {
@@ -794,12 +888,19 @@ function syncFullscreenMedia(session: FullscreenSession) {
         bindFullscreenStream(session, source);
         const tracks = source.getVideoTracks();
         bindFullscreenTracks(session, tracks);
-        const signature = getVideoTrackSignature(source);
-        if (signature !== session.sourceSignature || !(session.video.srcObject instanceof MediaStream)) {
+        const liveTracks = tracks.filter(track => track.readyState === "live");
+        const signature = source.id + ":" + getVideoTrackSignature(source);
+        const current = session.video.srcObject;
+        const attached = current instanceof MediaStream ? current.getVideoTracks() : [];
+        const sameTracks = attached.length === liveTracks.length && liveTracks.every((track, i) => track === attached[i]);
+        if (signature !== session.sourceSignature || !sameTracks) {
             session.sourceSignature = signature;
+            session.video.srcObject = null;
             session.video.removeAttribute("src");
-            session.video.srcObject = new MediaStream(tracks);
-            void session.video.play().catch(() => {});
+            if (liveTracks.length) {
+                session.video.srcObject = new MediaStream(liveTracks);
+                void session.video.play().catch(() => {});
+            }
         }
         return;
     }
@@ -1132,6 +1233,16 @@ function onVideoSourceEvent(event: Event) {
     if (!(event.target instanceof HTMLVideoElement)) return;
     const video = event.target;
     if (fullscreenSession?.sourceVideo === video) syncFullscreenMedia(fullscreenSession);
+    if (video.hasAttribute(FULLSCREEN_VIDEO_ATTRIBUTE)) return;
+    const tile = video.closest<HTMLElement>(TILE_SELECTOR);
+    if (!tile) return;
+    const state = states.get(video);
+    if (state) {
+        refreshManagedTracks(state);
+        invalidateGeometry(state);
+        scheduleApply(video);
+    }
+    queueTile(tile);
 }
 
 function onLoadedMetadata(event: Event) {
@@ -1169,6 +1280,8 @@ export default definePlugin({
         document.addEventListener("auxclick", onAuxClick);
         document.addEventListener("loadedmetadata", onLoadedMetadata, true);
         document.addEventListener("loadeddata", onVideoSourceEvent, true);
+        document.addEventListener("loadstart", onVideoSourceEvent, true);
+        document.addEventListener("playing", onVideoSourceEvent, true);
         document.addEventListener("emptied", onVideoSourceEvent, true);
         document.addEventListener("keydown", onKeyDown, true);
         document.addEventListener("fullscreenchange", onFullscreenChange);
@@ -1191,6 +1304,8 @@ export default definePlugin({
         document.removeEventListener("auxclick", onAuxClick);
         document.removeEventListener("loadedmetadata", onLoadedMetadata, true);
         document.removeEventListener("loadeddata", onVideoSourceEvent, true);
+        document.removeEventListener("loadstart", onVideoSourceEvent, true);
+        document.removeEventListener("playing", onVideoSourceEvent, true);
         document.removeEventListener("emptied", onVideoSourceEvent, true);
         document.removeEventListener("keydown", onKeyDown, true);
         document.removeEventListener("fullscreenchange", onFullscreenChange);
