@@ -10,7 +10,7 @@ import definePlugin from "@utils/types";
 export default definePlugin({
     name: "WebScreenShareFixes",
     authors: [Devs.Kaitlyn],
-    description: "Fixes Chromium/Vesktop screen sharing: raises Discord/WebRTC bitrate limits, seeds bandwidth probing/padding, and prevents preview CPU growth.",
+    description: "Fixes Chromium/Vesktop screen sharing: raises Go Live bitrate limits without forcing webcam SDP bandwidth, and prevents preview CPU growth.",
     tags: ["Voice"],
     enabledByDefault: true,
 
@@ -18,14 +18,10 @@ export default definePlugin({
         {
             find: "x-google-max-bitrate",
             replacement: [
-                {
-                    match: /`x-google-max-bitrate=\$\{\i\}`/,
-                    // Chromium's WebRTC BWE starts conservatively. A non-zero
-                    // min bitrate enables RTP padding, while start bitrate seeds
-                    // the initial probing rate so the estimator can discover
-                    // available capacity instead of idling near ~300 kbps.
-                    replace: '"x-google-min-bitrate=1000;x-google-start-bitrate=10000;x-google-max-bitrate=80000"'
-                },
+                // Do not override Discord's generic video SDP bitrate parameters.
+                // This code also applies to webcams, where a forced 1 Mbps floor
+                // and 10 Mbps startup rate can interfere with camera activation
+                // and renegotiation. Go Live bitrate is adjusted below instead.
                 {
                     match: /;usedtx=\$\{(\i)\?"0":"1"\}/,
                     replace: '$&${$1?";stereo=1;sprop-stereo=1":""}'
