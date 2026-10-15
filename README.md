@@ -184,3 +184,18 @@ EquicordPlus follows the repository's [GPL-3.0-or-later license](LICENSE).
 Discord is a trademark of Discord Inc. EquicordPlus is not affiliated with or endorsed by Discord Inc.
 
 Client modifications can violate Discord's Terms of Service. Plugins that automate user actions, bulk-message users, manage account tokens, or alter client behavior can carry additional account or security risk. Review what a plugin does before enabling it, especially on accounts you cannot afford to lose.
+
+<!-- chaython-funding:start -->
+## Support development
+
+[GitHub Sponsors](https://github.com/sponsors/Chaython) · [Patreon](https://patreon.com/Chaython) · [Buy Me a Coffee](https://buymeacoffee.com/chaython) · [PayPal](https://paypal.me/ChaythonM)
+
+Cryptocurrency donations:
+
+- Ethereum (ETH): `0x201B6E0B0282BBAE1592C24f9CbD39009A70F7d7`
+- Bitcoin (BTC): `32o7JmXgFcs4R1SbcLLVKQCRw9KHkhneJi`
+- Solana (SOL): `BDicyUL9zizDeYBLw8oBwotv6jtHotLLQD7Bcqg2atLk`
+- USDC (confirm network before sending): `0xBeD35dcAd9F1A32459B3C0DF004371EBE939E760`
+
+Confirm the blockchain network for USDC before transferring.
+<!-- chaython-funding:end -->
