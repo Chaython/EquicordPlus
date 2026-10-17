@@ -19,14 +19,14 @@ export default definePlugin({
             find: "x-google-max-bitrate",
             replacement: [
                 {
-                    match: /\`x-google-max-bitrate=\$\{\i\}\`/,
+                    match: /`x-google-max-bitrate=\$\{\i\}`/,
                     // Restore the previous 10 Mbps startup bitrate while retaining
                     // the existing adaptive WebRTC estimator and Go Live limits.
                     replace: '"x-google-min-bitrate=1000;x-google-start-bitrate=10000;x-google-max-bitrate=80000"'
                 },
                 {
                     match: /;usedtx=\$\{(\i)\?"0":"1"\}/,
-                    replace: '$&\${$1?";stereo=1;sprop-stereo=1":""}'
+                    replace: '$&${$1?";stereo=1;sprop-stereo=1":""}'
                 },
             ]
         },
