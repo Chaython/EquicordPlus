@@ -10,7 +10,7 @@
  */
 
 import { PluginNative } from "@utils/types";
-import { React, Toasts, useEffect, useState } from "@webpack/common";
+import { React, useEffect, useState } from "@webpack/common";
 
 import { pluginLogger as log } from "../../logging";
 import { formatETA, formatFileSize } from "../formatting";
@@ -442,9 +442,9 @@ export function UploadProgressBar() {
                                     try {
                                         const success = await cancelUploadTracking(uploadId);
                                         if (success) {
-                                            showUploadNotification(`Upload cancelled: ${fileName}`, Toasts.Type.MESSAGE);
+                                            showUploadNotification(`Upload cancelled: ${fileName}`, "default");
                                         } else {
-                                            showUploadNotification("Couldn't cancel - upload may have already completed", Toasts.Type.FAILURE);
+                                            showUploadNotification("Couldn't cancel - upload may have already completed", "critical");
                                         }
                                     } finally {
                                         setIsCancelling(false);
@@ -597,9 +597,9 @@ export function UploadProgressBar() {
                                                 try {
                                                     const success = await cancelUploadTracking(progress.uploadId);
                                                     if (success) {
-                                                        showUploadNotification("Upload cancelled", Toasts.Type.MESSAGE);
+                                                        showUploadNotification("Upload cancelled", "default");
                                                     } else {
-                                                        showUploadNotification("Couldn't cancel - upload may have already completed", Toasts.Type.FAILURE);
+                                                        showUploadNotification("Couldn't cancel - upload may have already completed", "critical");
                                                     }
                                                 } finally {
                                                     setIsCancelling(false);
