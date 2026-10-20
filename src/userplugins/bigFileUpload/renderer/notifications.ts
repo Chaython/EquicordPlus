@@ -6,19 +6,21 @@
 
 import { showNotification } from "@api/Notifications";
 import { Settings } from "@api/Settings";
-import { showToast, Toasts } from "@webpack/common";
+import { showToast } from "@webpack/common";
 
 /**
  * Show upload notification or toast based on user preference
  * Consolidated from index.tsx and UploadProgressBar.tsx to avoid duplication
  */
-export function showUploadNotification(message: string, type: any = Toasts.Type.MESSAGE) {
+type ToastVariant = "default" | "success" | "critical";
+
+export function showUploadNotification(message: string, type: ToastVariant = "default") {
     const useNotifications = Settings.plugins.BigFileUpload?.useNotifications === "Yes";
 
     if (useNotifications) {
-        const color = type === Toasts.Type.FAILURE
+        const color = type === "critical"
             ? "var(--red-360)"
-            : type === Toasts.Type.SUCCESS
+            : type === "success"
                 ? "var(--green-360)"
                 : undefined;
 
@@ -29,6 +31,6 @@ export function showUploadNotification(message: string, type: any = Toasts.Type.
             noPersist: true
         });
     } else {
-        showToast(message, type);
+        showToast({ text: message, variant: type });
     }
 }
