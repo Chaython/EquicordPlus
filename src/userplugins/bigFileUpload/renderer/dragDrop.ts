@@ -9,7 +9,7 @@
  * Exposes functions consumed by the renderer entry
  */
 
-import { ChannelStore, DraftType, SelectedChannelStore, showToast, Toasts, UploadManager } from "@webpack/common";
+import { ChannelStore, DraftType, SelectedChannelStore, showToast, UploadManager } from "@webpack/common";
 
 import { pluginLogger as log } from "../logging";
 import { formatFileSize } from "./formatting";
@@ -225,7 +225,7 @@ export async function handleDrop(e: DragEvent) {
     log.debug("Processing drop for channel", { channelId });
 
     if (!channelId) {
-        showToast("Please select a channel before uploading", Toasts.Type.FAILURE);
+        showToast({ text: "Please select a channel before uploading", variant: "critical" });
         return;
     }
 
@@ -242,10 +242,10 @@ export async function handleDrop(e: DragEvent) {
     for (const file of files) {
         try {
             if (file.size > DRAG_DROP_MAX_SIZE) {
-                showToast(
-                    `'${file.name}' is too large (${formatFileSize(file.size)}). Drag-and-drop limit is ${formatFileSize(DRAG_DROP_MAX_SIZE)}. Use the Upload button for larger files.`,
-                    Toasts.Type.FAILURE
-                );
+                showToast({
+                    text: `'${file.name}' is too large (${formatFileSize(file.size)}). Drag-and-drop limit is ${formatFileSize(DRAG_DROP_MAX_SIZE)}. Use the Upload button for larger files.`,
+                    variant: "critical"
+                });
                 continue;
             }
 
@@ -257,7 +257,7 @@ export async function handleDrop(e: DragEvent) {
 
         } catch (error) {
             log.error(`Drag-and-drop upload failed for '${file.name}':`, error);
-            showToast(`Failed to upload '${file.name}'. Try again or use the Upload button.`, Toasts.Type.FAILURE);
+            showToast({ text: `Failed to upload '${file.name}'. Try again or use the Upload button.`, variant: "critical" });
         }
     }
 }
