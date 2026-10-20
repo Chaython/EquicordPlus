@@ -17,7 +17,7 @@ import { insertTextIntoChatInputBox, sendMessage } from "@utils/discord";
 import { Margins } from "@utils/margins";
 import definePlugin, { OptionType, PluginNative } from "@utils/types";
 import { findByPropsLazy } from "@webpack";
-import { Button, DraftType, Menu, PermissionsBits, PermissionStore, React, Select, SelectedChannelStore, showToast, TextInput, Toasts, UploadManager, useEffect, useState } from "@webpack/common";
+import { Button, DraftType, Menu, PermissionsBits, PermissionStore, React, Select, SelectedChannelStore, showToast, TextInput, UploadManager, useEffect, useState } from "@webpack/common";
 
 import { LoggingLevel, pluginLogger as log, setLoggingLevelProvider } from "./logging";
 import { UploadProgressBar } from "./renderer/components/UploadProgressBar";
@@ -109,17 +109,17 @@ function notifyFallbackInfo(result: any) {
     if (!failed.length) return;
     const message = `Fallback used: ${failed.join(", ")} failed, uploaded via ${uploader}.`;
     log.info(message);
-    showUploadNotification(message, Toasts.Type.MESSAGE);
+    showUploadNotification(message, "default");
 }
 
 type NativeNotification = { type: string; message: string; timestamp?: number; };
 
 function handleNativeNotification(notification: NativeNotification) {
     const toastType = notification.type === "failure"
-        ? Toasts.Type.FAILURE
+        ? "critical"
         : notification.type === "success"
-            ? Toasts.Type.SUCCESS
-            : Toasts.Type.MESSAGE;
+            ? "success"
+            : "default";
 
     // Log native events to renderer console (native logs go to main process, not visible in DevTools)
     if (notification.type === "failure") {
@@ -280,10 +280,10 @@ function SettingsComponent(props: { setValue(v: any): void; }) {
                     setFileUploader("Custom");
                     updateSetting("fileUploader", "Custom");
 
-                    showToast("ShareX config imported successfully");
+                    showToast({ text: "ShareX config imported successfully" });
                 } catch (error) {
                     log.error("Error parsing ShareX config:", error);
-                    showToast("Invalid ShareX config. Ensure it's valid JSON.");
+                    showToast({ text: "Invalid ShareX config. Ensure it's valid JSON." });
                 }
             };
             reader.readAsText(file);
@@ -295,20 +295,20 @@ function SettingsComponent(props: { setValue(v: any): void; }) {
     const validateCustomUploaderSettings = () => {
         if (fileUploader === "Custom") {
             if (!settings.store.customUploaderRequestURL || settings.store.customUploaderRequestURL.trim() === "") {
-                showToast("Custom uploader: Request URL is required");
+                showToast({ text: "Custom uploader: Request URL is required" });
                 return false;
             }
             if (!settings.store.customUploaderFileFormName || settings.store.customUploaderFileFormName.trim() === "") {
-                showToast("Custom uploader: File form name is required");
+                showToast({ text: "Custom uploader: File form name is required" });
                 return false;
             }
             if (!settings.store.customUploaderURL || settings.store.customUploaderURL.trim() === "") {
-                showToast("Custom uploader: Response URL path is required");
+                showToast({ text: "Custom uploader: Response URL path is required" });
                 return false;
             }
             // Check for placeholder values that shouldn't be there
             if (settings.store.customUploaderURL.includes("$json:") || settings.store.customUploaderURL.includes("$")) {
-                showToast("Custom uploader: Replace $json:... placeholders with actual JSON paths");
+                showToast({ text: "Custom uploader: Replace $json:... placeholders with actual JSON paths" });
                 return false;
             }
         }
@@ -1061,7 +1061,7 @@ async function handleSmallFileUpload(file: File, skipBatchStart = false) {
         if (file.size > DRAG_DROP_MAX_SIZE) {
             showUploadNotification(
                 `File too large (${formatFileSize(file.size)}). Drag-and-drop limit is ${formatFileSize(DRAG_DROP_MAX_SIZE)}. Use the Upload button for larger files.`,
-                Toasts.Type.FAILURE
+                "critical"
             );
             return;
         }
@@ -1136,7 +1136,7 @@ async function handleSmallFileUpload(file: File, skipBatchStart = false) {
             }
             // Don't show error notification if upload was cancelled
             if (result.error !== "Upload cancelled by user") {
-                showUploadNotification(`Upload failed: ${result.error}`, Toasts.Type.FAILURE);
+                showUploadNotification(`Upload failed: ${result.error}`, "critical");
             }
             return;
         }
@@ -1166,10 +1166,10 @@ async function handleSmallFileUpload(file: File, skipBatchStart = false) {
                 const failedUploaders = attemptedUploaders ? attemptedUploaders.slice(0, -1).join(", ") : selectedUploader;
                 const notificationMsg = `${result.fileName} uploaded via ${actualUploader} (fallback from ${failedUploaders})`;
                 log.debug(`Showing fallback notification: ${notificationMsg}`);
-                showUploadNotification(notificationMsg, Toasts.Type.SUCCESS);
+                showUploadNotification(notificationMsg, "success");
             } else {
                 log.debug("Showing normal success notification");
-                showUploadNotification(`${result.fileName} uploaded successfully`, Toasts.Type.SUCCESS);
+                showUploadNotification(`${result.fileName} uploaded successfully`, "success");
                 notifyFallbackInfo(result);
             }
 
@@ -1182,12 +1182,12 @@ async function handleSmallFileUpload(file: File, skipBatchStart = false) {
                 await Native.clearProgress();
             }
         } else {
-            showUploadNotification("Upload succeeded but no URL was returned. Try a different uploader.", Toasts.Type.FAILURE);
+            showUploadNotification("Upload succeeded but no URL was returned. Try a different uploader.", "critical");
             clearAndForceHide();
         }
     } catch (error) {
         log.error(`Upload failed for '${file.name}' (${formatFileSize(file.size)}):`, error);
-        showUploadNotification(`Upload failed unexpectedly: ${getErrorMessage(error)}`, Toasts.Type.FAILURE);
+        showUploadNotification(`Upload failed unexpectedly: ${getErrorMessage(error)}`, "critical");
 
         // Clear progress bar on error - force immediate hide
         clearAndForceHide();
@@ -1218,7 +1218,7 @@ async function triggerFileUpload() {
 
         // Notify user which uploader will be used
         const selectedUploader = settings.store.fileUploader || "Catbox";
-        showUploadNotification(`Uploading via ${selectedUploader}...`, Toasts.Type.MESSAGE);
+        showUploadNotification(`Uploading via ${selectedUploader}...`, "default");
         log.debug("Manual uploader selection snapshot", {
             selectedUploader,
             gofileToken: Boolean(settings.store.gofileToken),
@@ -1271,7 +1271,7 @@ async function triggerFileUpload() {
                     files: [{ file, platform: 1 }],
                     showLargeMessageDialog: false
                 });
-                showUploadNotification(`Using Discord upload for ${result.fileName}`, Toasts.Type.MESSAGE);
+                showUploadNotification(`Using Discord upload for ${result.fileName}`, "default");
             }
             return;
         }
@@ -1281,16 +1281,16 @@ async function triggerFileUpload() {
             clearAndForceHide();
 
             if (result.error === "File selection cancelled") {
-                showUploadNotification("File selection cancelled", Toasts.Type.MESSAGE);
+                showUploadNotification("File selection cancelled", "default");
                 return;
             }
 
             if (result.error === "Upload cancelled by user") {
-                showUploadNotification("Upload cancelled", Toasts.Type.FAILURE);
+                showUploadNotification("Upload cancelled", "critical");
                 return;
             }
 
-            showUploadNotification(`Upload failed: ${result.error}`, Toasts.Type.FAILURE);
+            showUploadNotification(`Upload failed: ${result.error}`, "critical");
             if (channelId) {
                 try {
                     UploadManager.clearAll(channelId, DraftType.ChannelMessage);
@@ -1311,7 +1311,7 @@ async function triggerFileUpload() {
 
             // Send text first, then atomically complete + dispatch to prevent race condition
             sendTextToChat(`${result.url}`);
-            showUploadNotification(`${result.fileName} uploaded successfully`, Toasts.Type.SUCCESS);
+            showUploadNotification(`${result.fileName} uploaded successfully`, "success");
             notifyFallbackInfo(result);
 
             // Use atomic completeAndDispatch to set both isComplete and isDispatched together
@@ -1335,7 +1335,7 @@ async function triggerFileUpload() {
         }
     } catch (error) {
         log.error(`Manual upload failed (uploader: ${settings.store.fileUploader || "Catbox"}):`, error);
-        showUploadNotification(`Upload failed unexpectedly: ${getErrorMessage(error)}`, Toasts.Type.FAILURE);
+        showUploadNotification(`Upload failed unexpectedly: ${getErrorMessage(error)}`, "critical");
 
         // Clear progress bar on error - force immediate hide
         clearAndForceHide();
@@ -1407,7 +1407,7 @@ async function handlePaste(e: ClipboardEvent) {
     const channelId = SelectedChannelStore.getChannelId();
 
     if (!channelId) {
-        showToast("Please select a channel before uploading", Toasts.Type.FAILURE);
+        showToast({ text: "Please select a channel before uploading", variant: "critical" });
         return;
     }
 
@@ -1431,7 +1431,7 @@ async function handlePaste(e: ClipboardEvent) {
             await handleSmallFileUpload(file, true); // true = skip batch start since we already started it
         } catch (error) {
             log.error("Paste upload error:", error);
-            showUploadNotification(`Failed to upload '${file.name}'. Try again or use the Upload button.`, Toasts.Type.FAILURE);
+            showUploadNotification(`Failed to upload '${file.name}'. Try again or use the Upload button.`, "critical");
         }
     }
 }
