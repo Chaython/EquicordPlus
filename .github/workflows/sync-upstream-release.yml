@@ -357,7 +357,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish validated browser extension
-        if: steps.browser_release.outputs.publish == 'true' && vars.ACT == 'false'
+        if: steps.browser_release.outputs.publish == 'true' && vars.ACT != 'true'
         run: |
           pnpx @equicord/publish-browser-extension@latest \
             --chrome-zip dist/extension-chrome.zip \
@@ -379,7 +379,7 @@ jobs:
           FIREFOX_JWT_SECRET: ${{ secrets.FIREFOX_JWT_SECRET }}
 
       - name: Tag successfully published browser version
-        if: steps.browser_release.outputs.publish == 'true' && vars.ACT == 'false'
+        if: steps.browser_release.outputs.publish == 'true' && vars.ACT != 'true'
         shell: bash
         env:
           PACKAGE_TAG: ${{ steps.browser_release.outputs.package_tag }}
