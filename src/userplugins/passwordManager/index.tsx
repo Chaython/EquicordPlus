@@ -11,7 +11,9 @@ import { EquicordDevs } from "@utils/constants";
 import * as Modal from "@utils/modal";
 import definePlugin from "@utils/types";
 // REMOVED "Flex" from the import below
-import { Button, React, Text, TextInput } from "@webpack/common";
+import { ButtonCompat as Button } from "@components/Button";
+import { TextCompat as Text } from "@components/BaseText";
+import { React, TextInput } from "@webpack/common";
 
 interface PasswordEntry {
     id: string;
