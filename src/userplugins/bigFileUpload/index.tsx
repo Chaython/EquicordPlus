@@ -6,7 +6,7 @@
 
 import { NavContextMenuPatchCallback } from "@api/ContextMenu";
 import { definePluginSettings } from "@api/Settings";
-import { ButtonCompat as Button } from "@components/Button";
+import { Button } from "@components/Button";
 import { Divider } from "@components/Divider";
 import { Flex } from "@components/Flex";
 import { FormSwitch } from "@components/FormSwitch";
@@ -748,8 +748,8 @@ function SettingsComponent(props: { setValue(v: any): void; }) {
                     </Paragraph>
                     <Button
                         onClick={triggerFileUpload}
-                        color={Button.Colors.BRAND}
-                        size={Button.Sizes.MEDIUM}
+                        variant="primary"
+                        size="medium"
                     >
                         Import ShareX Config
                     </Button>
