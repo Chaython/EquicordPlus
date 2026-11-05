@@ -356,8 +356,76 @@ jobs:
             echo "- Publish browser extension: $PUBLISH"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Publish validated browser extension
+      - name: Check browser publishing credentials
         if: steps.browser_release.outputs.publish == 'true' && vars.ACT != 'true'
+        id: browser_credentials
+        shell: bash
+        env:
+          CHROME_API_VERSION: ${{ secrets.CHROME_API_VERSION }}
+          CHROME_EXTENSION_ID: ${{ secrets.CHROME_EXTENSION_ID }}
+          CHROME_PUBLISHER_ID: ${{ secrets.CHROME_PUBLISHER_ID }}
+          CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL: ${{ secrets.CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL }}
+          CHROME_SERVICE_ACCOUNT_PRIVATE_KEY: ${{ secrets.CHROME_SERVICE_ACCOUNT_PRIVATE_KEY }}
+          EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
+          EDGE_PRODUCT_ID: ${{ secrets.EDGE_PRODUCT_ID }}
+          EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
+          FIREFOX_COMPATIBILITY: ${{ secrets.FIREFOX_COMPATIBILITY }}
+          FIREFOX_EXTENSION_ID: ${{ secrets.FIREFOX_EXTENSION_ID }}
+          FIREFOX_JWT_ISSUER: ${{ secrets.FIREFOX_JWT_ISSUER }}
+          FIREFOX_JWT_SECRET: ${{ secrets.FIREFOX_JWT_SECRET }}
+        run: |
+          set -euo pipefail
+
+          REQUIRED_SECRETS=(
+            CHROME_API_VERSION
+            CHROME_EXTENSION_ID
+            CHROME_PUBLISHER_ID
+            CHROME_SERVICE_ACCOUNT_CLIENT_EMAIL
+            CHROME_SERVICE_ACCOUNT_PRIVATE_KEY
+            EDGE_API_KEY
+            EDGE_PRODUCT_ID
+            EDGE_CLIENT_ID
+            FIREFOX_COMPATIBILITY
+            FIREFOX_EXTENSION_ID
+            FIREFOX_JWT_ISSUER
+            FIREFOX_JWT_SECRET
+          )
+
+          MISSING=()
+          for name in "${REQUIRED_SECRETS[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              MISSING+=("$name")
+            fi
+          done
+
+          if [ "${#MISSING[@]}" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+            echo "All browser-store publishing credentials are configured."
+            {
+              echo
+              echo "## Browser publishing credentials"
+              echo
+              echo "All required Chrome, Firefox, and Edge credentials are configured."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Browser-store publishing skipped because required repository secrets are missing."
+            {
+              echo
+              echo "## Browser publishing skipped"
+              echo
+              echo "The build and GitHub release succeeded, but browser-store publishing was skipped."
+              echo "Configure all required Chrome, Firefox, and Edge repository secrets to enable automatic store publishing."
+              echo
+              echo "Missing secrets:"
+              for name in "${MISSING[@]}"; do
+                echo "- `$name`"
+              done
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publish validated browser extension
+        if: steps.browser_release.outputs.publish == 'true' && steps.browser_credentials.outputs.ready == 'true' && vars.ACT != 'true'
         run: |
           pnpx @equicord/publish-browser-extension@latest \
             --chrome-zip dist/extension-chrome.zip \
@@ -379,7 +447,7 @@ jobs:
           FIREFOX_JWT_SECRET: ${{ secrets.FIREFOX_JWT_SECRET }}
 
       - name: Tag successfully published browser version
-        if: steps.browser_release.outputs.publish == 'true' && vars.ACT != 'true'
+        if: steps.browser_release.outputs.publish == 'true' && steps.browser_credentials.outputs.ready == 'true' && vars.ACT != 'true'
         shell: bash
         env:
           PACKAGE_TAG: ${{ steps.browser_release.outputs.package_tag }}
