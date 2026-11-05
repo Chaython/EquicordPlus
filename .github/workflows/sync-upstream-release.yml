@@ -425,7 +425,9 @@ jobs:
           fi
 
       - name: Publish validated browser extension
+        id: publish_browser
         if: steps.browser_release.outputs.publish == 'true' && steps.browser_credentials.outputs.ready == 'true' && vars.ACT != 'true'
+        continue-on-error: true
         run: |
           pnpx @equicord/publish-browser-extension@latest \
             --chrome-zip dist/extension-chrome.zip \
@@ -447,7 +449,7 @@ jobs:
           FIREFOX_JWT_SECRET: ${{ secrets.FIREFOX_JWT_SECRET }}
 
       - name: Tag successfully published browser version
-        if: steps.browser_release.outputs.publish == 'true' && steps.browser_credentials.outputs.ready == 'true' && vars.ACT != 'true'
+        if: steps.browser_release.outputs.publish == 'true' && steps.browser_credentials.outputs.ready == 'true' && steps.publish_browser.outcome == 'success' && vars.ACT != 'true'
         shell: bash
         env:
           PACKAGE_TAG: ${{ steps.browser_release.outputs.package_tag }}
@@ -455,3 +457,25 @@ jobs:
           set -euo pipefail
           git tag "$PACKAGE_TAG" "$(git rev-parse HEAD)"
           git push origin "$PACKAGE_TAG"
+
+
+      - name: Report optional browser publishing result
+        if: always() && steps.browser_release.outputs.publish == 'true'
+        shell: bash
+        env:
+          CREDENTIALS_READY: ${{ steps.browser_credentials.outputs.ready }}
+          PUBLISH_OUTCOME: ${{ steps.publish_browser.outcome }}
+        run: |
+          {
+            echo
+            echo "## Optional browser publishing result"
+            echo
+            if [ "$CREDENTIALS_READY" != "true" ]; then
+              echo "Browser-store publishing was skipped because credentials are not configured. This does not affect build success."
+            elif [ "$PUBLISH_OUTCOME" = "success" ]; then
+              echo "Browser-store publishing completed successfully."
+            else
+              echo "::warning::Browser-store publishing did not complete successfully. The validated build and GitHub release remain successful."
+              echo "Browser-store publishing did not complete successfully. This optional step is non-blocking; the validated build and GitHub release remain successful."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
