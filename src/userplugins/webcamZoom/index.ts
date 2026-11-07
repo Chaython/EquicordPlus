@@ -3,8 +3,10 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { addGlobalContextMenuPatch, GlobalContextMenuPatchCallback, removeGlobalContextMenuPatch } from "@api/ContextMenu";
 import { definePluginSettings } from "@api/Settings";
 import definePlugin, { OptionType } from "@utils/types";
+import { Menu, React, UserStore } from "@webpack/common";
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
@@ -16,6 +18,20 @@ const TILE_SELECTOR = "[data-selenium-video-tile]";
 const FULLSCREEN_ATTRIBUTE = "data-webcam-zoom-fullscreen";
 const FULLSCREEN_VIDEO_ATTRIBUTE = "data-webcam-zoom-fullscreen-video";
 const FULLSCREEN_UI_ATTRIBUTE = "data-webcam-zoom-fullscreen-ui";
+
+const TILE_ID_ATTRIBUTE = "data-selenium-video-tile";
+const POPOUT_UI_ATTRIBUTE = "data-webcam-zoom-popout-ui";
+const POPOUT_MIN_WIDTH = 200;
+const POPOUT_MIN_HEIGHT = 120;
+const POPOUT_DEFAULT_WIDTH = 360;
+// Discord's own layers (context menus, tooltips, modals) sit at ~1002, so the pop-outs stay just below them.
+const POPOUT_Z_INDEX = 1000;
+const HOVER_BUTTON_Z_INDEX = 999;
+const HOVER_BUTTON_SIZE = 30;
+const HOVER_BUTTON_MARGIN = 8;
+const HOVER_MIN_TILE_WIDTH = 140;
+const HOVER_MIN_TILE_HEIGHT = 80;
+const POPOUT_SYNC_INTERVAL = 500;
 
 interface SavedViewState {
     zoom: number;
@@ -184,6 +200,48 @@ const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         description: "Middle-click a webcam to reset its zoom and pan",
         default: true
+    },
+    cameraPopout: {
+        type: OptionType.BOOLEAN,
+        description: "Allow popping a single camera out into its own freely resizable window (hover button and right-click / \"...\" menu)",
+        default: true,
+        onChange(value) {
+            if (!value) hideHoverButton();
+        }
+    },
+    popoutHoverButton: {
+        type: OptionType.BOOLEAN,
+        description: "Show a pop-out button when hovering over a camera tile",
+        default: true,
+        onChange() {
+            hideHoverButton();
+        }
+    },
+    popoutButtonCorner: {
+        type: OptionType.SELECT,
+        description: "Which corner of a camera tile the hover pop-out button appears in",
+        options: [
+            { label: "Top left", value: "top-left", default: true },
+            { label: "Top right", value: "top-right" },
+            { label: "Bottom right", value: "bottom-right" }
+        ],
+        onChange() {
+            hideHoverButton();
+        }
+    },
+    popoutFit: {
+        type: OptionType.SELECT,
+        description: "How the picture fills a new camera pop-out (switchable per window with the button in its title bar)",
+        options: [
+            { label: "Stretch to fill the window", value: "fill", default: true },
+            { label: "Fit (keep aspect ratio, black bars)", value: "contain" },
+            { label: "Crop to fill (keep aspect ratio)", value: "cover" }
+        ]
+    },
+    popoutWidth: {
+        type: OptionType.NUMBER,
+        description: "Starting width of a new camera pop-out, in pixels (height follows the camera's aspect ratio)",
+        default: POPOUT_DEFAULT_WIDTH
     }
 });
 
@@ -1265,9 +1323,800 @@ function onLoadedMetadata(event: Event) {
     if (tile) queueTile(tile);
 }
 
+/* ------------------------------------------------------------------ *
+ * Camera pop-outs: one camera in its own freely resizable window.
+ * ------------------------------------------------------------------ */
+
+type PopoutFit = "fill" | "contain" | "cover";
+
+interface Bounds {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+}
+
+interface RememberedPopout extends Bounds {
+    fit: PopoutFit;
+}
+
+interface CameraPopout {
+    key: string;
+    tileId: string | null;
+    label: string;
+    root: HTMLDivElement;
+    content: HTMLDivElement;
+    body: HTMLDivElement;
+    stage: HTMLDivElement;
+    video: HTMLVideoElement;
+    message: HTMLDivElement;
+    fitButton: HTMLButtonElement;
+    dockButton: HTMLButtonElement | null;
+    sourceVideo: HTMLVideoElement | null;
+    sourceSignature: string;
+    mirrored: boolean;
+    fit: PopoutFit;
+    zoom: number;
+    x: number;
+    y: number;
+    pip: Window | null;
+    closed: boolean;
+}
+
+interface NamedUser {
+    globalName?: string | null;
+    username?: string;
+}
+
+interface ContextMenuSubject {
+    user?: NamedUser;
+    stream?: { ownerId?: string; };
+}
+
+interface DocumentPictureInPictureApi {
+    requestWindow(options?: { width?: number; height?: number; }): Promise<Window>;
+}
+
+const FIT_ORDER: PopoutFit[] = ["fill", "contain", "cover"];
+const FIT_LABELS: Record<PopoutFit, string> = { fill: "Stretch", contain: "Fit", cover: "Crop" };
+const FIT_DESCRIPTIONS: Record<PopoutFit, string> = {
+    fill: "stretches the picture to fill the whole window (may distort)",
+    contain: "keeps the aspect ratio and adds black bars",
+    cover: "keeps the aspect ratio and crops the edges to fill the window"
+};
+const POPOUT_FONT = "\"gg sans\", \"Noto Sans\", \"Helvetica Neue\", Helvetica, Arial, sans-serif";
+const POPOUT_ICON = "<svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M15 3h6v6\"/><path d=\"M10 14 21 3\"/><path d=\"M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6\"/></svg>";
+
+const RESIZE_HANDLES: Array<{ dir: string; cursor: string; style: Partial<CSSStyleDeclaration>; }> = [
+    { dir: "n", cursor: "ns-resize", style: { top: "0", left: "10px", right: "10px", height: "6px" } },
+    { dir: "s", cursor: "ns-resize", style: { bottom: "0", left: "10px", right: "10px", height: "6px" } },
+    { dir: "e", cursor: "ew-resize", style: { right: "0", top: "10px", bottom: "10px", width: "6px" } },
+    { dir: "w", cursor: "ew-resize", style: { left: "0", top: "10px", bottom: "10px", width: "6px" } },
+    { dir: "nw", cursor: "nwse-resize", style: { top: "0", left: "0", width: "10px", height: "10px" } },
+    { dir: "ne", cursor: "nesw-resize", style: { top: "0", right: "0", width: "10px", height: "10px" } },
+    { dir: "sw", cursor: "nesw-resize", style: { bottom: "0", left: "0", width: "10px", height: "10px" } },
+    { dir: "se", cursor: "nwse-resize", style: { bottom: "0", right: "0", width: "10px", height: "10px" } }
+];
+
+const popouts = new Map<string, CameraPopout>();
+const rememberedPopouts = new Map<string, RememberedPopout>();
+
+let popoutSyncTimer: number | null = null;
+let hoverButton: HTMLButtonElement | null = null;
+let hoverTile: HTMLElement | null = null;
+// The camera tile the person last pressed the mouse on. Used to decide whether an opening
+// context menu (right-click or Discord's "..." button) belongs to a camera.
+let contextTile: HTMLElement | null = null;
+
+function css(element: HTMLElement, styles: Partial<CSSStyleDeclaration>) {
+    Object.assign(element.style, styles);
+}
+
+function make<K extends keyof HTMLElementTagNameMap>(tag: K, styles?: Partial<CSSStyleDeclaration>, text?: string): HTMLElementTagNameMap[K] {
+    const element = document.createElement(tag);
+    if (styles) css(element, styles);
+    if (text) element.textContent = text;
+    return element;
+}
+
+function normalizeFit(value: unknown): PopoutFit {
+    return FIT_ORDER.find(fit => fit === value) ?? "fill";
+}
+
+function getTileWithVideo(target: EventTarget | null) {
+    const tile = getDiscordVideoTile(target);
+    if (!tile) return null;
+    const video = getVisibleVideo(tile);
+    return video && isRenderableVideo(video) ? { tile, video } : null;
+}
+
+function getTileLabel(tile: HTMLElement) {
+    const aria = tile.getAttribute("aria-label")?.trim();
+    if (aria) return aria.slice(0, 80);
+    return "Camera";
+}
+
+function clampBounds(bounds: Bounds): Bounds {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const width = clamp(bounds.width, POPOUT_MIN_WIDTH, Math.max(POPOUT_MIN_WIDTH, vw));
+    const height = clamp(bounds.height, POPOUT_MIN_HEIGHT, Math.max(POPOUT_MIN_HEIGHT, vh));
+    return {
+        width,
+        height,
+        // Always keep a part of the title bar on screen so the window can be grabbed again.
+        left: clamp(bounds.left, 80 - width, vw - 80),
+        top: clamp(bounds.top, 0, vh - 40)
+    };
+}
+
+function applyBounds(popout: CameraPopout, bounds: Bounds) {
+    css(popout.root, {
+        left: Math.round(bounds.left) + "px",
+        top: Math.round(bounds.top) + "px",
+        width: Math.round(bounds.width) + "px",
+        height: Math.round(bounds.height) + "px"
+    });
+}
+
+function trackDrag(
+    element: HTMLElement,
+    event: PointerEvent,
+    onMove: (dx: number, dy: number) => void,
+    onEnd?: () => void
+) {
+    const { pointerId, clientX: startX, clientY: startY } = event;
+    try {
+        element.setPointerCapture(pointerId);
+    } catch {}
+
+    const move = (e: PointerEvent) => {
+        if (e.pointerId === pointerId) onMove(e.clientX - startX, e.clientY - startY);
+    };
+    const end = (e: PointerEvent) => {
+        if (e.pointerId !== pointerId) return;
+        element.removeEventListener("pointermove", move);
+        element.removeEventListener("pointerup", end);
+        element.removeEventListener("pointercancel", end);
+        try {
+            element.releasePointerCapture(pointerId);
+        } catch {}
+        onEnd?.();
+    };
+
+    element.addEventListener("pointermove", move);
+    element.addEventListener("pointerup", end);
+    element.addEventListener("pointercancel", end);
+}
+
+/* ---------- hover button ---------- */
+
+function hideHoverButton() {
+    hoverTile = null;
+    if (hoverButton) hoverButton.style.display = "none";
+}
+
+function destroyHoverButton() {
+    hoverButton?.remove();
+    hoverButton = null;
+    hoverTile = null;
+}
+
+function ensureHoverButton(): HTMLButtonElement {
+    if (hoverButton) return hoverButton;
+
+    const button = make("button", {
+        position: "fixed",
+        zIndex: String(HOVER_BUTTON_Z_INDEX),
+        display: "none",
+        alignItems: "center",
+        justifyContent: "center",
+        width: HOVER_BUTTON_SIZE + "px",
+        height: HOVER_BUTTON_SIZE + "px",
+        padding: "0",
+        border: "none",
+        borderRadius: "50%",
+        background: "rgba(0, 0, 0, 0.65)",
+        color: "#fff",
+        cursor: "pointer",
+        boxShadow: "0 1px 4px rgba(0, 0, 0, 0.5)"
+    });
+    button.type = "button";
+    button.title = "Pop out camera";
+    button.setAttribute("aria-label", "Pop out camera");
+    button.setAttribute(POPOUT_UI_ATTRIBUTE, "true");
+    button.innerHTML = POPOUT_ICON;
+    button.addEventListener("pointerenter", () => css(button, { background: "rgba(0, 0, 0, 0.9)" }));
+    button.addEventListener("pointerleave", () => css(button, { background: "rgba(0, 0, 0, 0.65)" }));
+    button.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const tile = hoverTile;
+        hideHoverButton();
+        if (tile?.isConnected) openPopoutForTile(tile);
+    });
+
+    document.body.append(button);
+    hoverButton = button;
+    return button;
+}
+
+function showHoverButton(tile: HTMLElement) {
+    const button = ensureHoverButton();
+    const rect = tile.getBoundingClientRect();
+    const corner = settings.store.popoutButtonCorner;
+    const left = corner === "top-left"
+        ? rect.left + HOVER_BUTTON_MARGIN
+        : rect.right - HOVER_BUTTON_SIZE - HOVER_BUTTON_MARGIN;
+    const top = corner === "bottom-right"
+        ? rect.bottom - HOVER_BUTTON_SIZE - HOVER_BUTTON_MARGIN
+        : rect.top + HOVER_BUTTON_MARGIN;
+
+    css(button, {
+        display: "flex",
+        left: Math.round(clamp(left, 0, window.innerWidth - HOVER_BUTTON_SIZE)) + "px",
+        top: Math.round(clamp(top, 0, window.innerHeight - HOVER_BUTTON_SIZE)) + "px"
+    });
+}
+
+function onPointerOver(event: PointerEvent) {
+    if (!settings.store.cameraPopout || !settings.store.popoutHoverButton || event.pointerType === "touch") return;
+    const { target } = event;
+    if (target instanceof Node && hoverButton?.contains(target)) return;
+
+    const tile = getDiscordVideoTile(target);
+    if (!tile) {
+        hideHoverButton();
+        return;
+    }
+
+    if (tile !== hoverTile) {
+        const rect = tile.getBoundingClientRect();
+        if (!getTileWithVideo(tile) || rect.width < HOVER_MIN_TILE_WIDTH || rect.height < HOVER_MIN_TILE_HEIGHT) {
+            hideHoverButton();
+            return;
+        }
+        hoverTile = tile;
+    }
+    showHoverButton(tile);
+}
+
+function onInteractionCapture(event: PointerEvent) {
+    const { target } = event;
+    if (!(target instanceof Element)) return;
+    // Pressing inside an open menu must not change which camera the menu belongs to.
+    if (target.closest("[role=\"menu\"]")) return;
+    contextTile = settings.store.cameraPopout ? getTileWithVideo(target)?.tile ?? null : null;
+}
+
+const cameraContextPatch: GlobalContextMenuPatchCallback = (_navId, children, ...args) => {
+    const tile = contextTile;
+    if (!settings.store.cameraPopout || !tile?.isConnected) return;
+
+    const subject = args[0] as ContextMenuSubject | undefined;
+    const ownerId = subject?.stream?.ownerId;
+    const user = subject?.user ?? (ownerId ? UserStore.getUser(ownerId) as NamedUser | undefined : undefined);
+    const label = user?.globalName || user?.username || undefined;
+
+    children.splice(-1, 0, React.createElement(Menu.MenuGroup, null,
+        React.createElement(Menu.MenuItem, {
+            id: "webcam-zoom-camera-popout",
+            label: "Pop Out Camera",
+            action: () => openPopoutForTile(tile, label)
+        })
+    ));
+};
+
+/* ---------- pop-out lifecycle ---------- */
+
+function openPopoutForTile(tile: HTMLElement, label?: string) {
+    if (!settings.store.cameraPopout) return;
+    const video = getVisibleVideo(tile);
+    if (!video || !isRenderableVideo(video)) return;
+
+    const tileId = tile.getAttribute(TILE_ID_ATTRIBUTE);
+    const key = tileId ? "tile:" + tileId : getVideoKey(video, tile);
+
+    const existing = popouts.get(key);
+    if (existing) {
+        focusPopout(existing);
+        existing.pip?.focus();
+        return;
+    }
+
+    createPopout(key, tileId, video, label || getTileLabel(tile));
+}
+
+function focusPopout(popout: CameraPopout) {
+    for (const other of popouts.values()) css(other.root, { zIndex: String(POPOUT_Z_INDEX) });
+    css(popout.root, { zIndex: String(POPOUT_Z_INDEX + 1) });
+}
+
+function rememberPopout(popout: CameraPopout) {
+    const previous = rememberedPopouts.get(popout.key);
+    const rect = popout.root.getBoundingClientRect();
+    const inApp = !popout.pip && rect.width > 0 && rect.height > 0;
+    const bounds: Bounds | undefined = inApp
+        ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
+        : previous;
+    if (bounds) rememberedPopouts.set(popout.key, { left: bounds.left, top: bounds.top, width: bounds.width, height: bounds.height, fit: popout.fit });
+}
+
+function applyPopoutView(popout: CameraPopout) {
+    const rect = popout.body.getBoundingClientRect();
+    const maxX = Math.max(0, rect.width * (popout.zoom - 1) / 2);
+    const maxY = Math.max(0, rect.height * (popout.zoom - 1) / 2);
+    popout.x = clamp(popout.x, -maxX, maxX);
+    popout.y = clamp(popout.y, -maxY, maxY);
+
+    const stageStyle = popout.stage.style;
+    if (popout.zoom > MIN_ZOOM + 0.001) {
+        stageStyle.setProperty("translate", String(popout.x) + "px " + String(popout.y) + "px");
+        stageStyle.setProperty("scale", String(popout.zoom));
+        stageStyle.setProperty("will-change", "translate, scale");
+        popout.body.style.cursor = settings.store.dragPan ? "grab" : "";
+    } else {
+        popout.zoom = MIN_ZOOM;
+        popout.x = 0;
+        popout.y = 0;
+        stageStyle.removeProperty("translate");
+        stageStyle.removeProperty("scale");
+        stageStyle.removeProperty("will-change");
+        popout.body.style.cursor = "";
+    }
+
+    popout.video.style.objectFit = popout.fit;
+    popout.video.style.transform = popout.mirrored ? "scaleX(-1)" : "";
+    popout.fitButton.textContent = FIT_LABELS[popout.fit];
+    popout.fitButton.title = "Picture mode: " + FIT_LABELS[popout.fit] + " " + FIT_DESCRIPTIONS[popout.fit] + ". Click to change.";
+}
+
+function resetPopoutView(popout: CameraPopout) {
+    popout.zoom = MIN_ZOOM;
+    popout.x = 0;
+    popout.y = 0;
+    applyPopoutView(popout);
+}
+
+function findPopoutSource(popout: CameraPopout): HTMLVideoElement | null {
+    const current = popout.sourceVideo;
+    if (current?.isConnected && isRenderableVideo(current)) return current;
+    if (!popout.tileId) return null;
+
+    // Discord recreates tiles/videos when a camera is toggled or the layout changes,
+    // so look the camera up again by its tile id.
+    for (const tile of document.querySelectorAll<HTMLElement>(TILE_SELECTOR)) {
+        if (tile.getAttribute(TILE_ID_ATTRIBUTE) !== popout.tileId) continue;
+        const video = getVisibleVideo(tile);
+        if (video && isRenderableVideo(video)) return video;
+    }
+    return null;
+}
+
+function syncPopoutMedia(popout: CameraPopout) {
+    if (popout.closed) return;
+
+    const source = findPopoutSource(popout);
+    popout.sourceVideo = source;
+
+    if (!source) {
+        if (popout.sourceSignature !== "") {
+            popout.sourceSignature = "";
+            popout.video.pause();
+            popout.video.srcObject = null;
+            popout.video.removeAttribute("src");
+        }
+        css(popout.message, { display: "flex" });
+        css(popout.video, { visibility: "hidden" });
+        return;
+    }
+
+    css(popout.message, { display: "none" });
+    css(popout.video, { visibility: "visible" });
+
+    const mirrored = isMirrored(source);
+    if (mirrored !== popout.mirrored) {
+        popout.mirrored = mirrored;
+        applyPopoutView(popout);
+    }
+
+    const stream = source.srcObject;
+    if (stream instanceof MediaStream) {
+        const tracks = stream.getVideoTracks().filter(track => track.readyState === "live");
+        const signature = stream.id + ":" + tracks.map(track => track.id).join("|");
+        if (signature !== popout.sourceSignature || !popout.video.srcObject) {
+            popout.sourceSignature = signature;
+            popout.video.removeAttribute("src");
+            popout.video.srcObject = new MediaStream(tracks);
+            void popout.video.play().catch(() => {});
+        }
+        return;
+    }
+
+    const src = source.currentSrc;
+    const signature = "src:" + src;
+    if (src && signature !== popout.sourceSignature) {
+        popout.sourceSignature = signature;
+        popout.video.srcObject = null;
+        popout.video.src = src;
+        void popout.video.play().catch(() => {});
+    }
+}
+
+function startPopoutSync() {
+    if (popoutSyncTimer !== null) return;
+    popoutSyncTimer = window.setInterval(() => {
+        for (const popout of popouts.values()) syncPopoutMedia(popout);
+    }, POPOUT_SYNC_INTERVAL);
+}
+
+function stopPopoutSyncIfIdle() {
+    if (popouts.size > 0 || popoutSyncTimer === null) return;
+    clearInterval(popoutSyncTimer);
+    popoutSyncTimer = null;
+}
+
+function getPictureInPictureApi(): DocumentPictureInPictureApi | null {
+    const api = (window as unknown as { documentPictureInPicture?: DocumentPictureInPictureApi; }).documentPictureInPicture;
+    return api && typeof api.requestWindow === "function" ? api : null;
+}
+
+/** Moves the pop-out into a real, always-on-top system window (Chromium's Document Picture-in-Picture). */
+async function detachPopout(popout: CameraPopout) {
+    const api = getPictureInPictureApi();
+    if (!api || popout.pip || popout.closed) return;
+
+    const rect = popout.root.getBoundingClientRect();
+    let pip: Window;
+    try {
+        pip = await api.requestWindow({ width: Math.round(rect.width), height: Math.round(rect.height) });
+    } catch (error) {
+        console.warn("[WebcamZoom] Could not open a separate camera window:", error);
+        return;
+    }
+
+    if (popout.closed || popout.pip) {
+        pip.close();
+        return;
+    }
+
+    rememberPopout(popout);
+    popout.pip = pip;
+    pip.document.title = popout.label + " - Camera";
+    css(pip.document.body, { margin: "0", background: "#000", overflow: "hidden" });
+    pip.addEventListener("resize", () => applyPopoutView(popout));
+    pip.addEventListener("pagehide", () => {
+        if (popout.pip === pip) dockPopout(popout);
+    });
+
+    css(popout.root, { display: "none" });
+    pip.document.body.append(popout.content);
+    if (popout.dockButton) {
+        popout.dockButton.textContent = "Dock";
+        popout.dockButton.title = "Move the camera back into Discord";
+    }
+    applyPopoutView(popout);
+    void popout.video.play().catch(() => {});
+}
+
+function dockPopout(popout: CameraPopout) {
+    const { pip } = popout;
+    if (!pip) return;
+    popout.pip = null;
+
+    css(popout.root, { display: "" });
+    // Keep the content first so the resize handles stay on top of it.
+    popout.root.prepend(popout.content);
+    try {
+        pip.close();
+    } catch {}
+
+    if (popout.dockButton) {
+        popout.dockButton.textContent = "Detach";
+        popout.dockButton.title = "Move the camera into its own always-on-top window";
+    }
+    applyPopoutView(popout);
+    void popout.video.play().catch(() => {});
+}
+
+function closePopout(popout: CameraPopout) {
+    if (popout.closed) return;
+    rememberPopout(popout);
+    popout.closed = true;
+    popouts.delete(popout.key);
+
+    const { pip } = popout;
+    popout.pip = null;
+    if (pip) {
+        try {
+            pip.close();
+        } catch {}
+    }
+
+    popout.video.pause();
+    popout.video.srcObject = null;
+    popout.video.removeAttribute("src");
+    popout.content.remove();
+    popout.root.remove();
+    stopPopoutSyncIfIdle();
+}
+
+function closeAllPopouts() {
+    for (const popout of [...popouts.values()]) closePopout(popout);
+}
+
+function onWindowResize() {
+    hideHoverButton();
+    for (const popout of popouts.values()) {
+        if (popout.pip) continue;
+        const rect = popout.root.getBoundingClientRect();
+        applyBounds(popout, clampBounds({ left: rect.left, top: rect.top, width: rect.width, height: rect.height }));
+        applyPopoutView(popout);
+    }
+}
+
+function makePopoutButton(text: string, title: string, onClick: () => void) {
+    const idle = "rgba(0, 0, 0, 0.6)";
+    const button = make("button", {
+        flex: "none",
+        height: "24px",
+        minWidth: "24px",
+        padding: "0 10px",
+        border: "none",
+        borderRadius: "12px",
+        background: idle,
+        color: "#fff",
+        fontFamily: "inherit",
+        fontSize: "12px",
+        lineHeight: "24px",
+        cursor: "pointer"
+    }, text);
+    button.type = "button";
+    button.title = title;
+    button.addEventListener("pointerenter", () => css(button, { background: "rgba(255, 255, 255, 0.28)" }));
+    button.addEventListener("pointerleave", () => css(button, { background: idle }));
+    button.addEventListener("click", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+    });
+    return button;
+}
+
+function createPopout(key: string, tileId: string | null, source: HTMLVideoElement, label: string) {
+    const remembered = rememberedPopouts.get(key);
+    const aspect = source.videoWidth > 0 && source.videoHeight > 0 ? source.videoWidth / source.videoHeight : 16 / 9;
+    const startWidth = clamp(Number(settings.store.popoutWidth) || POPOUT_DEFAULT_WIDTH, POPOUT_MIN_WIDTH, Math.max(POPOUT_MIN_WIDTH, window.innerWidth - 48));
+    const width = remembered?.width ?? startWidth;
+    const height = remembered?.height ?? Math.round(width / aspect);
+    const stagger = (popouts.size % 6) * 28;
+    const bounds = clampBounds({
+        left: remembered?.left ?? window.innerWidth - width - 24 - stagger,
+        top: remembered?.top ?? window.innerHeight - height - 24 - stagger,
+        width,
+        height
+    });
+
+    const root = make("div", {
+        position: "fixed",
+        zIndex: String(POPOUT_Z_INDEX),
+        overflow: "hidden",
+        borderRadius: "8px",
+        background: "#000",
+        boxShadow: "0 8px 24px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.12)"
+    });
+    root.setAttribute(POPOUT_UI_ATTRIBUTE, "true");
+
+    const content = make("div", { position: "absolute", inset: "0", overflow: "hidden", background: "#000", fontFamily: POPOUT_FONT });
+    const body = make("div", { position: "absolute", inset: "0", overflow: "hidden", touchAction: "none" });
+    const stage = make("div", { position: "absolute", inset: "0" });
+    const video = make("video", {
+        position: "absolute",
+        inset: "0",
+        width: "100%",
+        height: "100%",
+        background: "#000",
+        objectPosition: "center center",
+        pointerEvents: "none"
+    });
+    video.autoplay = true;
+    video.muted = true;
+    video.playsInline = true;
+    video.controls = false;
+    video.disablePictureInPicture = true;
+
+    const message = make("div", {
+        position: "absolute",
+        inset: "0",
+        display: "none",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "#b5bac1",
+        fontSize: "14px",
+        pointerEvents: "none"
+    }, "Camera is off or has left the call");
+
+    stage.append(video);
+    body.append(stage, message);
+
+    const bar = make("div", {
+        position: "absolute",
+        top: "0",
+        left: "0",
+        right: "0",
+        zIndex: "2",
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+        padding: "8px 12px",
+        background: "linear-gradient(rgba(0, 0, 0, 0.75), rgba(0, 0, 0, 0))",
+        color: "#fff",
+        fontSize: "13px",
+        userSelect: "none",
+        opacity: "0",
+        transition: "opacity 0.12s",
+        cursor: "move"
+    });
+    const title = make("span", {
+        flex: "1 1 auto",
+        minWidth: "0",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        textShadow: "0 1px 2px rgba(0, 0, 0, 0.8)"
+    }, label);
+
+    const popout: CameraPopout = {
+        key,
+        tileId,
+        label,
+        root,
+        content,
+        body,
+        stage,
+        video,
+        message,
+        fitButton: null as unknown as HTMLButtonElement,
+        dockButton: null,
+        sourceVideo: source,
+        sourceSignature: "",
+        mirrored: isMirrored(source),
+        fit: remembered?.fit ?? normalizeFit(settings.store.popoutFit),
+        zoom: MIN_ZOOM,
+        x: 0,
+        y: 0,
+        pip: null,
+        closed: false
+    };
+
+    popout.fitButton = makePopoutButton("", "", () => {
+        popout.fit = FIT_ORDER[(FIT_ORDER.indexOf(popout.fit) + 1) % FIT_ORDER.length];
+        applyPopoutView(popout);
+        rememberPopout(popout);
+    });
+    const resetButton = makePopoutButton("Reset", "Reset zoom and pan (double-click or middle-click the picture)", () => resetPopoutView(popout));
+    const closeButton = makePopoutButton("\u00d7", "Close", () => closePopout(popout));
+    closeButton.style.fontSize = "16px";
+
+    bar.append(title, popout.fitButton, resetButton);
+    if (getPictureInPictureApi()) {
+        popout.dockButton = makePopoutButton("Detach", "Move the camera into its own always-on-top window", () => {
+            if (popout.pip) dockPopout(popout);
+            else void detachPopout(popout);
+        });
+        bar.append(popout.dockButton);
+    }
+    bar.append(closeButton);
+
+    // Title bar controls fade in on hover.
+    const showBar = () => { bar.style.opacity = "1"; };
+    const hideBar = () => { bar.style.opacity = "0"; };
+    for (const target of [root, content]) {
+        target.addEventListener("pointerenter", showBar);
+        target.addEventListener("pointerleave", hideBar);
+    }
+
+    root.addEventListener("pointerdown", () => focusPopout(popout), true);
+
+    // Move the window by its title bar.
+    bar.addEventListener("pointerdown", event => {
+        if (event.button !== 0 || popout.pip) return;
+        if (event.target instanceof Element && event.target.closest("button")) return;
+        event.preventDefault();
+        const start = root.getBoundingClientRect();
+        trackDrag(bar, event, (dx, dy) => {
+            applyBounds(popout, clampBounds({ left: start.left + dx, top: start.top + dy, width: start.width, height: start.height }));
+        }, () => rememberPopout(popout));
+    });
+
+    // Free resizing from every edge and corner.
+    const handles = RESIZE_HANDLES.map(({ dir, cursor, style }) => {
+        const handle = make("div", { position: "absolute", zIndex: "5", cursor, touchAction: "none", ...style });
+        handle.addEventListener("pointerdown", event => {
+            if (event.button !== 0 || popout.pip) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const start = root.getBoundingClientRect();
+            trackDrag(handle, event, (dx, dy) => {
+                let { left, top, right, bottom } = start;
+                if (dir.includes("e")) right += dx;
+                if (dir.includes("w")) left += dx;
+                if (dir.includes("s")) bottom += dy;
+                if (dir.includes("n")) top += dy;
+
+                if (right - left < POPOUT_MIN_WIDTH) {
+                    if (dir.includes("w")) left = right - POPOUT_MIN_WIDTH;
+                    else right = left + POPOUT_MIN_WIDTH;
+                }
+                if (bottom - top < POPOUT_MIN_HEIGHT) {
+                    if (dir.includes("n")) top = bottom - POPOUT_MIN_HEIGHT;
+                    else bottom = top + POPOUT_MIN_HEIGHT;
+                }
+
+                applyBounds(popout, { left, top, width: right - left, height: bottom - top });
+                applyPopoutView(popout);
+            }, () => rememberPopout(popout));
+        });
+        return handle;
+    });
+
+    // Wheel zoom (towards the pointer), drag to pan, double/middle click to reset.
+    body.addEventListener("wheel", event => {
+        if (!settings.store.wheelZoom) return;
+        event.preventDefault();
+
+        const oldZoom = popout.zoom;
+        const newZoom = clamp(oldZoom * Math.exp(-normalizedWheelDelta(event) * ZOOM_SENSITIVITY), MIN_ZOOM, MAX_ZOOM);
+        if (newZoom === oldZoom) return;
+
+        const rect = body.getBoundingClientRect();
+        const pointerX = event.clientX - (rect.left + rect.width / 2);
+        const pointerY = event.clientY - (rect.top + rect.height / 2);
+        const ratio = newZoom / oldZoom;
+        popout.x = pointerX - (pointerX - popout.x) * ratio;
+        popout.y = pointerY - (pointerY - popout.y) * ratio;
+        popout.zoom = newZoom;
+        applyPopoutView(popout);
+    }, { passive: false });
+
+    body.addEventListener("pointerdown", event => {
+        if (!settings.store.dragPan || event.button !== 0 || popout.zoom <= MIN_ZOOM) return;
+        event.preventDefault();
+        const startX = popout.x;
+        const startY = popout.y;
+        trackDrag(body, event, (dx, dy) => {
+            popout.x = startX + dx;
+            popout.y = startY + dy;
+            applyPopoutView(popout);
+        });
+    });
+
+    body.addEventListener("dblclick", event => {
+        event.preventDefault();
+        resetPopoutView(popout);
+    });
+
+    body.addEventListener("auxclick", event => {
+        if (event.button !== 1 || !settings.store.middleClickReset) return;
+        event.preventDefault();
+        resetPopoutView(popout);
+    });
+
+    content.append(body, bar);
+    root.append(content, ...handles);
+    applyBounds(popout, bounds);
+    document.body.append(root);
+
+    popouts.set(key, popout);
+    focusPopout(popout);
+    applyPopoutView(popout);
+    syncPopoutMedia(popout);
+    startPopoutSync();
+}
+
 export default definePlugin({
     name: "WebcamZoom",
-    description: "Adds aspect-correct or stretch-to-fill webcams, mouse-wheel zoom, drag panning and true fullscreen camera viewing.",
+    description: "Adds aspect-correct or stretch-to-fill webcams, mouse-wheel zoom, drag panning, true fullscreen camera viewing and freely resizable per-camera pop-out windows.",
     authors: [{ name: "Chaython", id: 1415804298771824740n }],
     tags: ["Voice", "Media"],
     settings,
@@ -1286,6 +2135,12 @@ export default definePlugin({
         document.addEventListener("keydown", onKeyDown, true);
         document.addEventListener("fullscreenchange", onFullscreenChange);
         window.addEventListener("blur", onWindowBlur);
+        document.addEventListener("pointerover", onPointerOver, true);
+        document.addEventListener("pointerdown", onInteractionCapture, true);
+        document.documentElement.addEventListener("pointerleave", hideHoverButton);
+        window.addEventListener("blur", hideHoverButton);
+        window.addEventListener("resize", onWindowResize);
+        addGlobalContextMenuPatch(cameraContextPatch);
 
         resizeObserver = new ResizeObserver(onContainerResize);
         observer = new MutationObserver(onMutations);
@@ -1295,7 +2150,18 @@ export default definePlugin({
 
     stop() {
         closeCustomFullscreen();
+        closeAllPopouts();
+        destroyHoverButton();
+        contextTile = null;
+        rememberedPopouts.clear();
         finishDrag(undefined, true);
+
+        removeGlobalContextMenuPatch(cameraContextPatch);
+        document.removeEventListener("pointerover", onPointerOver, true);
+        document.removeEventListener("pointerdown", onInteractionCapture, true);
+        document.documentElement.removeEventListener("pointerleave", hideHoverButton);
+        window.removeEventListener("blur", hideHoverButton);
+        window.removeEventListener("resize", onWindowResize);
 
         document.removeEventListener("wheel", onWheel);
         document.removeEventListener("pointerdown", onPointerDown);
