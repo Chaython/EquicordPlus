@@ -2020,7 +2020,9 @@ function createPopout(key: string, tileId: string | null, source: HTMLVideoEleme
             popout.fullscreenButton.textContent = "Exit full screen";
             popout.fullscreenButton.title = "Exit full screen (Escape)";
         } else {
-            for (const property of ["position", "inset", "width", "height", "z-index", "border-radius"]) style.removeProperty(property);
+            style.setProperty("position", "absolute", "important");
+            style.setProperty("inset", "0", "important");
+            for (const property of ["width", "height", "z-index", "border-radius"]) style.removeProperty(property);
             popout.fullscreenButton.textContent = "Fullscreen";
             popout.fullscreenButton.title = "Show this camera pop-out full screen (Escape to exit)";
         }
