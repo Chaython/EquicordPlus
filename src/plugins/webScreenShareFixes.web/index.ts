@@ -10,7 +10,7 @@ import definePlugin from "@utils/types";
 export default definePlugin({
     name: "WebScreenShareFixes",
     authors: [Devs.Kaitlyn],
-    description: "Fixes Chromium/Vesktop screen sharing: raises Go Live bitrate limits without forcing webcam SDP bandwidth, and prevents preview CPU growth.",
+    description: "Fixes Chromium/Vesktop screen sharing: restores 10 Mbps video startup bandwidth, raises Go Live bitrate limits, and prevents preview CPU growth.",
     tags: ["Voice"],
     enabledByDefault: true,
 
@@ -18,10 +18,12 @@ export default definePlugin({
         {
             find: "x-google-max-bitrate",
             replacement: [
-                // Do not override Discord's generic video SDP bitrate parameters.
-                // This code also applies to webcams, where a forced 1 Mbps floor
-                // and 10 Mbps startup rate can interfere with camera activation
-                // and renegotiation. Go Live bitrate is adjusted below instead.
+                {
+                    match: /`x-google-max-bitrate=\$\{\i\}`/,
+                    // Restore the previous 10 Mbps startup bitrate while retaining
+                    // the existing adaptive WebRTC estimator and Go Live limits.
+                    replace: '"x-google-min-bitrate=1000;x-google-start-bitrate=10000;x-google-max-bitrate=80000"'
+                },
                 {
                     match: /;usedtx=\$\{(\i)\?"0":"1"\}/,
                     replace: '$&${$1?";stereo=1;sprop-stereo=1":""}'
@@ -29,10 +31,7 @@ export default definePlugin({
             ]
         },
         {
-            // Discord Web's stable media constants include a 9 Mbps high-quality
-            // Go Live ceiling and a 0.6/3.5 Mbps desktop target/max profile.
-            // Patch those constants directly so both setDesktopEncodingOptions()
-            // and OP 12 stream signalling inherit the higher values.
+            // Keep the existing Go Live quality-specific bitrate limits.
             find: "\"remoteSinkWantsPixelCount\"",
             replacement: [
                 {
