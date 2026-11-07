@@ -1351,6 +1351,8 @@ interface CameraPopout {
     video: HTMLVideoElement;
     message: HTMLDivElement;
     fitButton: HTMLButtonElement;
+    fullscreenButton: HTMLButtonElement;
+    onFullscreenChange: () => void;
     dockButton: HTMLButtonElement | null;
     sourceVideo: HTMLVideoElement | null;
     sourceSignature: string;
@@ -1833,6 +1835,7 @@ function closePopout(popout: CameraPopout) {
         } catch {}
     }
 
+    popout.content.removeEventListener("fullscreenchange", popout.onFullscreenChange);
     popout.video.pause();
     popout.video.srcObject = null;
     popout.video.removeAttribute("src");
@@ -1977,6 +1980,8 @@ function createPopout(key: string, tileId: string | null, source: HTMLVideoEleme
         video,
         message,
         fitButton: null as unknown as HTMLButtonElement,
+        fullscreenButton: null as unknown as HTMLButtonElement,
+        onFullscreenChange: () => {},
         dockButton: null,
         sourceVideo: source,
         sourceSignature: "",
@@ -1994,11 +1999,40 @@ function createPopout(key: string, tileId: string | null, source: HTMLVideoEleme
         applyPopoutView(popout);
         rememberPopout(popout);
     });
+    popout.fullscreenButton = makePopoutButton("Fullscreen", "Show this camera pop-out full screen (Escape to exit)", () => {
+        const ownerDocument = popout.content.ownerDocument;
+        if (ownerDocument.fullscreenElement === popout.content) {
+            void ownerDocument.exitFullscreen().catch(error => console.warn("[WebcamZoom] Could not exit pop-out fullscreen:", error));
+        } else if (typeof popout.content.requestFullscreen === "function") {
+            void popout.content.requestFullscreen().catch(error => console.warn("[WebcamZoom] Could not enter pop-out fullscreen:", error));
+        }
+    });
+    popout.onFullscreenChange = () => {
+        const active = popout.content.ownerDocument.fullscreenElement === popout.content;
+        const style = popout.content.style;
+        if (active) {
+            style.setProperty("position", "fixed", "important");
+            style.setProperty("inset", "0", "important");
+            style.setProperty("width", "100vw", "important");
+            style.setProperty("height", "100vh", "important");
+            style.setProperty("z-index", "2147483647", "important");
+            style.setProperty("border-radius", "0", "important");
+            popout.fullscreenButton.textContent = "Exit full screen";
+            popout.fullscreenButton.title = "Exit full screen (Escape)";
+        } else {
+            for (const property of ["position", "inset", "width", "height", "z-index", "border-radius"]) style.removeProperty(property);
+            popout.fullscreenButton.textContent = "Fullscreen";
+            popout.fullscreenButton.title = "Show this camera pop-out full screen (Escape to exit)";
+        }
+        applyPopoutView(popout);
+    };
+    popout.content.addEventListener("fullscreenchange", popout.onFullscreenChange);
+
     const resetButton = makePopoutButton("Reset", "Reset zoom and pan (double-click or middle-click the picture)", () => resetPopoutView(popout));
     const closeButton = makePopoutButton("\u00d7", "Close", () => closePopout(popout));
     closeButton.style.fontSize = "16px";
 
-    bar.append(title, popout.fitButton, resetButton);
+    bar.append(title, popout.fitButton, popout.fullscreenButton, resetButton);
     if (getPictureInPictureApi()) {
         popout.dockButton = makePopoutButton("Detach", "Move the camera into its own always-on-top window", () => {
             if (popout.pip) dockPopout(popout);
