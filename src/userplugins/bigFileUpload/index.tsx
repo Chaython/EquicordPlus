@@ -18,7 +18,7 @@ import { insertTextIntoChatInputBox, sendMessage } from "@utils/discord";
 import { Margins } from "@utils/margins";
 import definePlugin, { OptionType, PluginNative } from "@utils/types";
 import { findByPropsLazy } from "@webpack";
-import { DraftType, Menu, PermissionsBits, PermissionStore, React, Select, SelectedChannelStore, showToast, TextInput, Toasts, UploadManager, useEffect, useState } from "@webpack/common";
+import { DraftType, Menu, PermissionsBits, PermissionStore, React, Select, SelectedChannelStore, showToast, TextInput, UploadManager, useEffect, useState } from "@webpack/common";
 
 import { LoggingLevel, pluginLogger as log, setLoggingLevelProvider } from "./logging";
 import { UploadProgressBar } from "./renderer/components/UploadProgressBar";

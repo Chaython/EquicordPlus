@@ -9,11 +9,18 @@ import "./styles.css";
 import { DataStore } from "@api/index";
 import { EquicordDevs } from "@utils/constants";
 import * as Modal from "@utils/modal";
+import type { ComponentType } from "react";
 import definePlugin from "@utils/types";
 // REMOVED "Flex" from the import below
 import { Button } from "@components/Button";
 import { Text } from "@components/Text";
 import { React, TextInput } from "@webpack/common";
+
+type LegacyModalProps = { transitionState: number; onClose: () => void; };
+const LegacyModalRoot = Modal.ModalRoot as unknown as ComponentType<any>;
+const LegacyModalHeader = Modal.ModalHeader as unknown as ComponentType<any>;
+const LegacyModalContent = Modal.ModalContent as unknown as ComponentType<any>;
+const LegacyModalFooter = Modal.ModalFooter as unknown as ComponentType<any>;
 
 interface PasswordEntry {
     id: string;
@@ -201,7 +208,7 @@ class PasswordManager {
     }
 }
 
-const AddPasswordModal = ({ manager, onClose, ...props }: Modal.ModalProps & {
+const AddPasswordModal = ({ manager, onClose, ...props }: LegacyModalProps & {
     manager: PasswordManager;
     onClose: () => void;
 }) => {
@@ -211,11 +218,11 @@ const AddPasswordModal = ({ manager, onClose, ...props }: Modal.ModalProps & {
     const [twoFactorSecret, setTwoFactorSecret] = React.useState("");
 
     return (
-        <Modal.ModalRoot {...props}>
-            <Modal.ModalHeader separator={false}>
+        <LegacyModalRoot {...props}>
+            <LegacyModalHeader separator={false}>
                 <Text size="lg" weight="semibold">Add Password</Text>
-            </Modal.ModalHeader>
-            <Modal.ModalContent className="password-modal-content">
+            </LegacyModalHeader>
+            <LegacyModalContent className="password-modal-content">
                 <div className="password-modal-section">
                     <Text size="sm" weight="medium" style={{ marginBottom: "8px" }}>Title</Text>
                     <TextInput
@@ -251,8 +258,8 @@ const AddPasswordModal = ({ manager, onClose, ...props }: Modal.ModalProps & {
                         onChange={e => setTwoFactorSecret(e)}
                     />
                 </div>
-            </Modal.ModalContent>
-            <Modal.ModalFooter className="password-modal-footer">
+            </LegacyModalContent>
+            <LegacyModalFooter className="password-modal-footer">
                 {/* Replaced Flex with div */}
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
                     <Button
@@ -278,12 +285,12 @@ const AddPasswordModal = ({ manager, onClose, ...props }: Modal.ModalProps & {
                         Cancel
                     </Button>
                 </div>
-            </Modal.ModalFooter>
-        </Modal.ModalRoot>
+            </LegacyModalFooter>
+        </LegacyModalRoot>
     );
 };
 
-const SetMasterPasswordModal = ({ manager, onSuccess, ...props }: Modal.ModalProps & {
+const SetMasterPasswordModal = ({ manager, onSuccess, ...props }: LegacyModalProps & {
     manager: PasswordManager;
     onSuccess?: () => void;
 }) => {
@@ -292,11 +299,11 @@ const SetMasterPasswordModal = ({ manager, onSuccess, ...props }: Modal.ModalPro
     const [error, setError] = React.useState("");
 
     return (
-        <Modal.ModalRoot {...props}>
-            <Modal.ModalHeader separator={false}>
+        <LegacyModalRoot {...props}>
+            <LegacyModalHeader separator={false}>
                 <Text size="lg" weight="semibold">Set Master Password</Text>
-            </Modal.ModalHeader>
-            <Modal.ModalContent className="password-modal-content">
+            </LegacyModalHeader>
+            <LegacyModalContent className="password-modal-content">
                 <div className="password-modal-section">
                     {/* Replaced Flex with div */}
                     <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
@@ -315,8 +322,8 @@ const SetMasterPasswordModal = ({ manager, onSuccess, ...props }: Modal.ModalPro
                         {error && <Text color="text-danger">{error}</Text>}
                     </div>
                 </div>
-            </Modal.ModalContent>
-            <Modal.ModalFooter className="password-modal-footer">
+            </LegacyModalContent>
+            <LegacyModalFooter className="password-modal-footer">
                 {/* Replaced Flex with div */}
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
                     <Button
@@ -341,8 +348,8 @@ const SetMasterPasswordModal = ({ manager, onSuccess, ...props }: Modal.ModalPro
                         Cancel
                     </Button>
                 </div>
-            </Modal.ModalFooter>
-        </Modal.ModalRoot>
+            </LegacyModalFooter>
+        </LegacyModalRoot>
     );
 };
 
@@ -352,7 +359,7 @@ const DeletePasswordModal = ({
     passwordTitle,
     onSuccess,
     ...props
-}: Modal.ModalProps & {
+}: LegacyModalProps & {
     manager: PasswordManager;
     passwordId: string;
     passwordTitle: string;
@@ -362,11 +369,11 @@ const DeletePasswordModal = ({
     const [error, setError] = React.useState("");
 
     return (
-        <Modal.ModalRoot {...props}>
-            <Modal.ModalHeader separator={false}>
+        <LegacyModalRoot {...props}>
+            <LegacyModalHeader separator={false}>
                 <Text size="lg" weight="semibold">Delete Password</Text>
-            </Modal.ModalHeader>
-            <Modal.ModalContent className="password-modal-content">
+            </LegacyModalHeader>
+            <LegacyModalContent className="password-modal-content">
                 <div className="password-modal-section">
                     <Text>Are you sure you want to delete "{passwordTitle}"?</Text>
                     <Text>Enter your master password to confirm:</Text>
@@ -378,8 +385,8 @@ const DeletePasswordModal = ({
                     />
                     {error && <Text color="text-danger">{error}</Text>}
                 </div>
-            </Modal.ModalContent>
-            <Modal.ModalFooter className="password-modal-footer">
+            </LegacyModalContent>
+            <LegacyModalFooter className="password-modal-footer">
                 {/* Replaced Flex with div */}
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
                     <Button
@@ -404,8 +411,8 @@ const DeletePasswordModal = ({
                         Cancel
                     </Button>
                 </div>
-            </Modal.ModalFooter>
-        </Modal.ModalRoot>
+            </LegacyModalFooter>
+        </LegacyModalRoot>
     );
 };
 
@@ -413,7 +420,7 @@ const ViewPasswordModal = ({
     manager,
     entry,
     ...props
-}: Modal.ModalProps & {
+}: LegacyModalProps & {
     manager: PasswordManager;
     entry: PasswordEntry;
 }) => {
@@ -431,11 +438,11 @@ const ViewPasswordModal = ({
     };
 
     return (
-        <Modal.ModalRoot {...props}>
-            <Modal.ModalHeader separator={false}>
+        <LegacyModalRoot {...props}>
+            <LegacyModalHeader separator={false}>
                 <Text size="lg" weight="semibold">View Password for {entry.title}</Text>
-            </Modal.ModalHeader>
-            <Modal.ModalContent className="password-modal-content">
+            </LegacyModalHeader>
+            <LegacyModalContent className="password-modal-content">
                 <div className="password-modal-section">
                     {!showPassword ? (
                         <>
@@ -468,8 +475,8 @@ const ViewPasswordModal = ({
                         </div>
                     )}
                 </div>
-            </Modal.ModalContent>
-            <Modal.ModalFooter className="password-modal-footer">
+            </LegacyModalContent>
+            <LegacyModalFooter className="password-modal-footer">
                 {/* Replaced Flex with div */}
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px" }}>
                     {!showPassword ? (
@@ -495,8 +502,8 @@ const ViewPasswordModal = ({
                         Cancel
                     </Button>
                 </div>
-            </Modal.ModalFooter>
-        </Modal.ModalRoot>
+            </LegacyModalFooter>
+        </LegacyModalRoot>
     );
 };
 

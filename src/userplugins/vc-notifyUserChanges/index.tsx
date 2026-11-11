@@ -11,7 +11,7 @@ import { Devs } from "@utils/constants";
 import definePlugin, { OptionType } from "@utils/types";
 import { findByPropsLazy, findStoreLazy } from "@webpack";
 import { Menu, PresenceStore, React, SelectedChannelStore, Tooltip, UserStore } from "@webpack/common";
-import type { Channel, User } from "discord-types/general";
+import type { Channel, User } from "@vencord/discord-types";
 import { CSSProperties } from "react";
 
 import { NotificationsOffIcon } from "./components/NotificationsOffIcon";
@@ -133,7 +133,7 @@ const PlatformIndicator = ({ user, wantMargin = true, wantTopMargin = false, sma
         }, {});
 
         const { clientStatuses } = PresenceStore.getState();
-        clientStatuses[UserStore.getCurrentUser().id] = ownStatus;
+        clientStatuses[UserStore.getCurrentUser().id] = ownStatus as Partial<Record<Platform, string>>;
     }
 
     const status = PresenceStore.getState()?.clientStatuses?.[user.id] as Record<Platform, string>;
