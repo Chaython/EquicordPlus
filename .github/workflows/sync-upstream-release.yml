@@ -66,7 +66,7 @@ jobs:
 
           BEFORE="$(git rev-parse HEAD)"
           cp pnpm-workspace.yaml /tmp/equicordplus-pnpm-workspace.yaml
-
+          # Upstream removed the fork\x27s Stylelint config; preserve it so the\n          # existing CSS lint command remains configured after every merge.\n          cp .stylelintrc.json /tmp/equicordplus-stylelintrc.json\n
           echo "Current EquicordPlus commit: $BEFORE"
           echo "Current Equicord upstream: $(git rev-parse upstream/main)"
 
@@ -108,6 +108,7 @@ jobs:
           # into the upstream workspace configuration before installing.
           node scripts/mergePnpmWorkspace.mjs /dev/null /tmp/equicordplus-pnpm-workspace.yaml pnpm-workspace.yaml
           cp /tmp/equicordplus-pnpm-workspace.yaml pnpm-workspace.yaml
+          cp /tmp/equicordplus-stylelintrc.json .stylelintrc.json
 
           AFTER="$(git rev-parse HEAD)"
 
@@ -244,7 +245,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          git add .github/workflows/sync-upstream-release.yml package.json src/userplugins/passwordManager/styles.css pnpm-lock.yaml
+          git add .github/workflows/sync-upstream-release.yml .stylelintrc.json package.json src/userplugins/passwordManager/styles.css pnpm-lock.yaml
           if ! git diff --cached --quiet; then
             git commit -m "Apply validated formatting and dependency lockfile updates"
           fi
