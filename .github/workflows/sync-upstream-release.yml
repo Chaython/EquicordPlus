@@ -66,7 +66,8 @@ jobs:
 
           BEFORE="$(git rev-parse HEAD)"
           cp pnpm-workspace.yaml /tmp/equicordplus-pnpm-workspace.yaml
-          # Upstream removed the fork\x27s Stylelint config; preserve it so the\n          # existing CSS lint command remains configured after every merge.\n          cp .stylelintrc.json /tmp/equicordplus-stylelintrc.json\n
+          # Preserve the fork's Stylelint configuration across upstream merges.
+          cp .stylelintrc.json /tmp/equicordplus-stylelintrc.json\n
           echo "Current EquicordPlus commit: $BEFORE"
           echo "Current Equicord upstream: $(git rev-parse upstream/main)"
 
