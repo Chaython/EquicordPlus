@@ -225,6 +225,9 @@ jobs:
           pnpm exec stylelint src/userplugins/passwordManager/styles.css
           pnpm lint:intl
           pnpm lint:patches
+          # Formatting is checked against the normalized workflow files above,
+          # but keep fork-managed Actions files unchanged in the pushed commit.
+          git checkout "$BEFORE" -- .github/workflows
 
       - name: Build web artifacts
         if: steps.gate.outputs.build == 'true'
@@ -255,7 +258,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          git add .github/workflows/sync-upstream-release.yml .github/workflows/publish.yml .github/workflows/reportBrokenPlugins.yml .stylelintrc.json package.json src/userplugins/passwordManager/styles.css pnpm-lock.yaml
+          git add .stylelintrc.json package.json src/userplugins/passwordManager/styles.css pnpm-lock.yaml
           if ! git diff --cached --quiet; then
             git commit -m "Apply validated formatting and dependency lockfile updates"
           fi
