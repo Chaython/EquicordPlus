@@ -65,6 +65,7 @@ jobs:
           git fetch --no-tags upstream main
 
           BEFORE="$(git rev-parse HEAD)"
+          cp pnpm-workspace.yaml /tmp/equicordplus-pnpm-workspace.yaml
 
           echo "Current EquicordPlus commit: $BEFORE"
           echo "Current Equicord upstream: $(git rev-parse upstream/main)"
@@ -101,6 +102,12 @@ jobs:
             git merge --abort
             exit 1
           fi
+
+          # Git may auto-resolve non-overlapping workspace edits by accepting
+          # upstream deletions. Explicitly union fork-only catalog entries back
+          # into the upstream workspace configuration before installing.
+          node scripts/mergePnpmWorkspace.mjs /dev/null /tmp/equicordplus-pnpm-workspace.yaml pnpm-workspace.yaml
+          cp /tmp/equicordplus-pnpm-workspace.yaml pnpm-workspace.yaml
 
           AFTER="$(git rev-parse HEAD)"
 
