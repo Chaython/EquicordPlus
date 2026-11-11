@@ -38,7 +38,7 @@ jobs:
 
       - name: Merge Equicord upstream locally
         id: sync
-        if: github.event_name != 'push'
+        if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
         shell: bash
         run: |
           set -euo pipefail
