@@ -58,6 +58,8 @@ jobs:
           # The lockfile is regenerated from the combined manifest after merge.
           git config merge.equicordplus-lock.name "Regenerate combined pnpm lockfile"
           git config merge.equicordplus-lock.driver "cp %B %A"
+          git config merge.equicordplus-workspace.name "Merge upstream workspace catalog with fork-only entries"
+          git config merge.equicordplus-workspace.driver "node scripts/mergePnpmWorkspace.mjs %O %A %B"
 
           git remote add upstream https://github.com/Equicord/Equicord.git
           git fetch --no-tags upstream main
