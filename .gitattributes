@@ -3,3 +3,8 @@
 # EquicordPlus owns its README. The upstream-sync workflow configures this
 # custom merge driver to keep our version during Equicord upstream merges.
 README.md merge=equicordplus-readme
+
+# package.json uses an explicit fork/upstream ownership policy.
+package.json merge=equicordplus-package
+# pnpm regenerates the upstream-seeded lockfile for the merged manifest.
+pnpm-lock.yaml merge=equicordplus-lock

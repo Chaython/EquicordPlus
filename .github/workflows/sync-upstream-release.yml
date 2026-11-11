@@ -51,6 +51,14 @@ jobs:
           git config merge.equicordplus-readme.name "Keep EquicordPlus README"
           git config merge.equicordplus-readme.driver true
 
+          # Explicit package policy: fork metadata/custom-only entries stay;
+          # upstream version, scripts, dependencies and toolchain take priority.
+          git config merge.equicordplus-package.name "Merge fork metadata with upstream toolchain"
+          git config merge.equicordplus-package.driver "node scripts/mergePackageJson.mjs %O %A %B"
+          # The lockfile is regenerated from the combined manifest after merge.
+          git config merge.equicordplus-lock.name "Regenerate combined pnpm lockfile"
+          git config merge.equicordplus-lock.driver "cp %B %A"
+
           git remote add upstream https://github.com/Equicord/Equicord.git
           git fetch --no-tags upstream main
 
@@ -158,24 +166,37 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Install dependencies
+      - name: Install and reconcile dependencies
         if: steps.gate.outputs.build == 'true'
-        run: pnpm install --frozen-lockfile
+        id: dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Resolve the combined fork/upstream manifest, then verify that the
+          # generated lockfile supports a clean frozen installation.
+          pnpm install --no-frozen-lockfile
+          pnpm install --frozen-lockfile
+
+          if git diff --quiet -- pnpm-lock.yaml; then
+            echo "lockfile_changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "lockfile_changed=true" >> "$GITHUB_OUTPUT"
+            echo "pnpm-lock.yaml was reconciled and will be pushed only after validation."
+          fi
 
       - name: Build desktop artifacts
         if: steps.gate.outputs.build == 'true'
         run: pnpm buildStandalone
 
-      - name: TypeScript diagnostics
+      - name: TypeScript validation
         if: steps.gate.outputs.build == 'true'
-        continue-on-error: true
         run: pnpm testTsc
 
-      - name: Lint diagnostics
+      - name: Lint and formatting validation
         if: steps.gate.outputs.build == 'true'
-        continue-on-error: true
         run: |
           pnpm lint
+          pnpm fmt:check
           pnpm lint-styles
           pnpm lint:intl
           pnpm lint:patches
@@ -203,8 +224,8 @@ jobs:
             -x "dist/*" \
             -x ".git/*"
 
-      - name: Push validated upstream merge
-        if: steps.gate.outputs.build == 'true' && steps.sync.outputs.changed == 'true'
+      - name: Push validated upstream merge and lockfile
+        if: steps.gate.outputs.build == 'true' && (steps.sync.outputs.changed == 'true' || steps.dependencies.outputs.lockfile_changed == 'true')
         shell: bash
         run: |
           set -euo pipefail
