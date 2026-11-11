@@ -731,8 +731,8 @@ export const Devs = /* #__PURE__*/ Object.freeze({
 } satisfies Record<string, Dev>);
 
 export const EquicordDevs = Object.freeze({
-    // Preserve the fork's legacy plugin author label without inventing an ID.
-    ExoDev: { name: "ExoDev", id: 0n },
+    // EquicordPlus maintainer and author of maintained fork plugins.
+    Chaython: { name: "Chaython", id: 0n },
     nobody: {
         name: "nobody",
         id: 0n
