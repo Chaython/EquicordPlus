@@ -214,7 +214,7 @@ jobs:
         run: |
           # Normalize the fork-owned files touched by the merge and attribution
           # updates before enforcing the repository-wide formatting check.
-          pnpm exec oxfmt .github/workflows/sync-upstream-release.yml package.json src/userplugins/passwordManager/styles.css
+          pnpm exec oxfmt .github/workflows/sync-upstream-release.yml .github/workflows/publish.yml .github/workflows/reportBrokenPlugins.yml package.json src/userplugins/passwordManager/styles.css
           # Keep upstream source lint strict while excluding maintained fork
           # plugins with legacy lint debt and the local merge helpers.
           pnpm lint --ignore-pattern 'src/userplugins/**' --ignore-pattern 'scripts/mergePackageJson.mjs' --ignore-pattern 'scripts/mergePnpmWorkspace.mjs'
@@ -255,7 +255,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          git add .github/workflows/sync-upstream-release.yml .stylelintrc.json package.json src/userplugins/passwordManager/styles.css pnpm-lock.yaml
+          git add .github/workflows/sync-upstream-release.yml .github/workflows/publish.yml .github/workflows/reportBrokenPlugins.yml .stylelintrc.json package.json src/userplugins/passwordManager/styles.css pnpm-lock.yaml
           if ! git diff --cached --quiet; then
             git commit -m "Apply validated formatting and dependency lockfile updates"
           fi
