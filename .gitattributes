@@ -8,3 +8,4 @@ README.md merge=equicordplus-readme
 package.json merge=equicordplus-package
 # pnpm regenerates the upstream-seeded lockfile for the merged manifest.
 pnpm-lock.yaml merge=equicordplus-lock
+pnpm-workspace.yaml merge=equicordplus-workspace
