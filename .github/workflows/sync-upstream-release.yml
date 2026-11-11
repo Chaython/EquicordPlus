@@ -104,6 +104,12 @@ jobs:
             exit 1
           fi
 
+          # Preserve fork-managed Actions workflows. The workflow token cannot
+          # create/update workflow files from an upstream merge (GitHub requires
+          # the separate `workflows` permission), so upstream workflow changes
+          # are intentionally excluded from this automated sync.
+          git checkout "$BEFORE" -- .github/workflows
+
           # Git may auto-resolve non-overlapping workspace edits by accepting
           # upstream deletions. Explicitly union fork-only catalog entries back
           # into the upstream workspace configuration before installing.
