@@ -67,7 +67,7 @@ jobs:
           BEFORE="$(git rev-parse HEAD)"
           cp pnpm-workspace.yaml /tmp/equicordplus-pnpm-workspace.yaml
           # Preserve the fork's Stylelint configuration across upstream merges.
-          cp .stylelintrc.json /tmp/equicordplus-stylelintrc.json\n
+          cp .stylelintrc.json /tmp/equicordplus-stylelintrc.json
           echo "Current EquicordPlus commit: $BEFORE"
           echo "Current Equicord upstream: $(git rev-parse upstream/main)"
 
