@@ -204,10 +204,11 @@ jobs:
       - name: Lint and formatting validation
         if: steps.gate.outputs.build == 'true'
         run: |
-          # The fork's maintained userplugins contain legacy lint debt that
-          # is still covered by the full TypeScript check and production builds.
-          # Keep upstream source lint strict while excluding those fork-owned
-          # plugin files and the two local merge helpers.
+          # Normalize the fork-owned files touched by the merge and attribution
+          # updates before enforcing the repository-wide formatting check.
+          pnpm exec oxfmt .github/workflows/sync-upstream-release.yml package.json src/userplugins/passwordManager/styles.css
+          # Keep upstream source lint strict while excluding maintained fork
+          # plugins with legacy lint debt and the local merge helpers.
           pnpm lint --ignore-pattern 'src/userplugins/**' --ignore-pattern 'scripts/mergePackageJson.mjs' --ignore-pattern 'scripts/mergePnpmWorkspace.mjs'
           pnpm fmt:check
           pnpm lint-styles
@@ -237,11 +238,16 @@ jobs:
             -x "dist/*" \
             -x ".git/*"
 
-      - name: Push validated upstream merge and lockfile
-        if: steps.gate.outputs.build == 'true' && (steps.sync.outputs.changed == 'true' || steps.dependencies.outputs.lockfile_changed == 'true')
+      - name: Push validated upstream merge, lockfile and formatting fixes
+        if: steps.gate.outputs.build == 'true'
         shell: bash
         run: |
           set -euo pipefail
+
+          git add .github/workflows/sync-upstream-release.yml package.json src/userplugins/passwordManager/styles.css pnpm-lock.yaml
+          if ! git diff --cached --quiet; then
+            git commit -m "Apply validated formatting and dependency lockfile updates"
+          fi
 
           SHA="$(git rev-parse HEAD)"
           git push origin HEAD:main
