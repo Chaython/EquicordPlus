@@ -71,7 +71,7 @@ interface DiscordAPIError {
 export default definePlugin({
     name: "AutoDeleteDMs",
     description: "Automatically deletes DMs after a specified time period",
-    authors: [EquicordDevs.ExoDev],
+    authors: [EquicordDevs.Chaython],
     settings,
 
     messageTimestamps: new Map<string, { timestamp: number, userId: string, channelId: string; }>(),
