@@ -81,7 +81,7 @@ jobs:
               if (text.includes(value.trim())) return text;
               const at = text.indexOf(marker);
               if (at < 0) throw new Error(`Could not find insertion point: ${marker}`);
-              return text.slice(0, at + marker.length) + "\\n" + value + text.slice(at + marker.length);
+              return text.slice(0, at + marker.length) + "\n" + value + text.slice(at + marker.length);
           }
 
           const testcordGuild = ours.match(/^export const TESTCORD_GUILD_ID = .*;$/m)?.[0];
@@ -90,25 +90,25 @@ jobs:
           }
 
           const customEntries = [
-              '    // EquicordPlus maintainer and author of maintained fork plugins.\\n    Chaython: { name: "Chaython", id: 0n },',
+              '    // EquicordPlus maintainer and author of maintained fork plugins.\n    Chaython: { name: "Chaython", id: 0n },',
               '    Benjii: { name: "Benjii", id: 463702169443368970n },'
           ];
           for (const entry of customEntries) {
-              if (!upstream.includes(entry.split("\\n").at(-1))) {
+              if (!upstream.includes(entry.split("\n").at(-1))) {
                   upstream = insertOnce(upstream, "export const EquicordDevs = Object.freeze({", entry);
               }
           }
 
-          const testcord = ours.match(/export const TestcordDevs = Object\\.freeze\\([\\s\\S]*?\\} satisfies Record<string, Dev>\\);/)?.[0];
-          const testcordById = ours.match(/export const TestcordDevsById = \/\\* #__PURE__\\*\/\\s*\\(\\(\\) =>[\\s\\S]*?\\)\\(\\) as Record<string, Dev>;/)?.[0];
+          const testcord = ours.match(/export const TestcordDevs = Object\.freeze\([\s\S]*?\} satisfies Record<string, Dev>\);/)?.[0];
+          const testcordById = ours.match(/export const TestcordDevsById = \/\* #__PURE__\*\/\s*\(\(\) =>[\s\S]*?\)\(\) as Record<string, Dev>;/)?.[0];
           if (testcord && !upstream.includes("export const TestcordDevs =")) {
               const marker = ")() as Record<string, Dev>;";
               const start = upstream.indexOf("export const EquicordDevsById =");
               const at = upstream.indexOf(marker, start);
               if (start < 0 || at < 0) throw new Error("Could not find EquicordDevsById insertion point");
               const end = at + marker.length;
-              upstream = upstream.slice(0, end) + "\\n\\n" + testcord +
-                  (testcordById ? "\\n\\n" + testcordById : "") + "\\n" + upstream.slice(end);
+              upstream = upstream.slice(0, end) + "\n\n" + testcord +
+                  (testcordById ? "\n\n" + testcordById : "") + "\n" + upstream.slice(end);
           }
 
           if (upstream.includes("<<<<<<<") || !upstream.includes("export const Chaython") && !upstream.includes('Chaython: { name: "Chaython"')) {
