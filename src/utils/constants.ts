@@ -21,13 +21,13 @@ export const REACT_GLOBAL = "Vencord.Webpack.Common.React";
 // Equicord
 export const SUPPORT_CHANNEL_ID = "1297590739911573585";
 export const GUILD_ID = "1173279886065029291";
+export const TESTCORD_GUILD_ID = "1173279886065029291";
 export const DONOR_ROLE_ID = "1173316879083896912";
 export const CONTRIB_ROLE_ID = "1222677964760682556";
 export const EQUICORD_TEAM = "1173520023239786538";
 export const EQUICORD_HELPERS = "1509542478905213088";
 export const VENCORD_CONTRIB_ROLE_ID = "1173343399470964856";
 export const EQUIBOT_USER_ID = "1243063117852835941";
-export const TESTCORD_GUILD_ID = "1173279886065029291";
 export const KNOWN_ISSUES_CHANNEL_ID = "1466558228379992266";
 
 // Vencord
@@ -688,6 +688,10 @@ export const Devs = /* #__PURE__*/ Object.freeze({
         name: "yuna0x0",
         id: 213656926414831616n
     },
+    theo: {
+        name: "theo",
+        id: 1081551899397992509n
+    },
     scattagain: {
         name: "Amelia",
         id: 1098234477626544180n
@@ -727,12 +731,21 @@ export const Devs = /* #__PURE__*/ Object.freeze({
     NiNoX: {
         name: "NiNoX",
         id: 123435354958200833n
+    },
+    Cramber: {
+        name: "Cramber",
+        id: 342564015974907914n
     }
 } satisfies Record<string, Dev>);
 
 export const EquicordDevs = Object.freeze({
     // EquicordPlus maintainer and author of maintained fork plugins.
     Chaython: { name: "Chaython", id: 0n },
+    Benjii: { name: "Benjii", id: 463702169443368970n },
+    lethied: {
+        name: "lethied",
+        id: 892246841016590386n
+    },
     nobody: {
         name: "nobody",
         id: 0n
@@ -960,10 +973,6 @@ export const EquicordDevs = Object.freeze({
     bep: {
         name: "bep",
         id: 0n
-    },
-    Benjii: {
-        name: "Benjii",
-        id: 463702169443368970n
     },
     llytz: {
         name: "llytz",
@@ -1498,7 +1507,32 @@ export const EquicordDevs = Object.freeze({
         name: "rot",
         id: 1021210809164111932n
     },
+    dev0xz02: {
+        name: "dev0xz02",
+        id: 1135547862533550141n
+    },
+    ShaunLWM: {
+        name: "sprxsheep",
+        id: 130964561900732416n,
+    }
 } satisfies Record<string, Dev>);
+
+// iife so #__PURE__ works correctly
+export const VencordDevsById = /* #__PURE__*/ (() =>
+    Object.freeze(Object.fromEntries(
+        Object.entries(Devs)
+            .filter(d => d[1].id !== 0n)
+            .map(([_, v]) => [v.id, v] as const)
+    ))
+)() as Record<string, Dev>;
+
+export const EquicordDevsById = /* #__PURE__*/ (() =>
+    Object.freeze(Object.fromEntries(
+        Object.entries(EquicordDevs)
+            .filter(d => d[1].id !== 0n)
+            .map(([_, v]) => [v.id, v] as const)
+    ))
+)() as Record<string, Dev>;
 
 export const TestcordDevs = Object.freeze({
     x2b: {
@@ -1527,23 +1561,6 @@ export const TestcordDevs = Object.freeze({
     },
 } satisfies Record<string, Dev>);
 
-// iife so #__PURE__ works correctly
-export const VencordDevsById = /* #__PURE__*/ (() =>
-    Object.freeze(Object.fromEntries(
-        Object.entries(Devs)
-            .filter(d => d[1].id !== 0n)
-            .map(([_, v]) => [v.id, v] as const)
-    ))
-)() as Record<string, Dev>;
-
-export const EquicordDevsById = /* #__PURE__*/ (() =>
-    Object.freeze(Object.fromEntries(
-        Object.entries(EquicordDevs)
-            .filter(d => d[1].id !== 0n)
-            .map(([_, v]) => [v.id, v] as const)
-    ))
-)() as Record<string, Dev>;
-
 export const TestcordDevsById = /* #__PURE__*/ (() =>
     Object.freeze(Object.fromEntries(
         Object.entries(TestcordDevs)
@@ -1551,3 +1568,4 @@ export const TestcordDevsById = /* #__PURE__*/ (() =>
             .map(([_, v]) => [v.id, v] as const)
     ))
 )() as Record<string, Dev>;
+
