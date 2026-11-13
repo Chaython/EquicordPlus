@@ -227,7 +227,7 @@ jobs:
           pnpm lint:patches
           # Formatting is checked against the normalized workflow files above,
           # but keep fork-managed Actions files unchanged in the pushed commit.
-          git checkout "$BEFORE" -- .github/workflows
+          git restore --source=HEAD -- .github/workflows
 
       - name: Build web artifacts
         if: steps.gate.outputs.build == 'true'
