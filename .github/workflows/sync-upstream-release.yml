@@ -61,6 +61,65 @@ jobs:
           git config merge.equicordplus-workspace.name "Merge upstream workspace catalog with fork-only entries"
           git config merge.equicordplus-workspace.driver "node scripts/mergePnpmWorkspace.mjs %O %A %B"
 
+          # Merge upstream constants while retaining EquicordPlus-only metadata.
+          # Use a temporary attributes file so this policy is available before
+          # the merge starts and does not need to alter upstream's .gitattributes.
+          cat > /tmp/equicordplus-merge-attributes <<'ATTR'
+          src/utils/constants.ts merge=equicordplus-constants
+          ATTR
+          git config core.attributesFile /tmp/equicordplus-merge-attributes
+          git config merge.equicordplus-constants.name "Merge upstream constants with EquicordPlus metadata"
+          cat > /tmp/equicordplus-merge-constants.sh <<'MERGE'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          node - "$2" "$3" <<'NODE'
+          const fs = require("node:fs");
+          const ours = fs.readFileSync(process.argv[2], "utf8");
+          let upstream = fs.readFileSync(process.argv[3], "utf8");
+
+          function insertOnce(text, marker, value) {
+              if (text.includes(value.trim())) return text;
+              const at = text.indexOf(marker);
+              if (at < 0) throw new Error(`Could not find insertion point: ${marker}`);
+              return text.slice(0, at + marker.length) + "\\n" + value + text.slice(at + marker.length);
+          }
+
+          const testcordGuild = ours.match(/^export const TESTCORD_GUILD_ID = .*;$/m)?.[0];
+          if (testcordGuild && !/^export const TESTCORD_GUILD_ID = /m.test(upstream)) {
+              upstream = insertOnce(upstream, 'export const GUILD_ID = "1173279886065029291";', testcordGuild);
+          }
+
+          const customEntries = [
+              '    // EquicordPlus maintainer and author of maintained fork plugins.\\n    Chaython: { name: "Chaython", id: 0n },',
+              '    Benjii: { name: "Benjii", id: 463702169443368970n },'
+          ];
+          for (const entry of customEntries) {
+              if (!upstream.includes(entry.split("\\n").at(-1))) {
+                  upstream = insertOnce(upstream, "export const EquicordDevs = Object.freeze({", entry);
+              }
+          }
+
+          const testcord = ours.match(/export const TestcordDevs = Object\\.freeze\\([\\s\\S]*?\\} satisfies Record<string, Dev>\\);/)?.[0];
+          const testcordById = ours.match(/export const TestcordDevsById = \/\\* #__PURE__\\*\/\\s*\\(\\(\\) =>[\\s\\S]*?\\)\\(\\) as Record<string, Dev>;/)?.[0];
+          if (testcord && !upstream.includes("export const TestcordDevs =")) {
+              const marker = ")() as Record<string, Dev>;";
+              const start = upstream.indexOf("export const EquicordDevsById =");
+              const at = upstream.indexOf(marker, start);
+              if (start < 0 || at < 0) throw new Error("Could not find EquicordDevsById insertion point");
+              const end = at + marker.length;
+              upstream = upstream.slice(0, end) + "\\n\\n" + testcord +
+                  (testcordById ? "\\n\\n" + testcordById : "") + "\\n" + upstream.slice(end);
+          }
+
+          if (upstream.includes("<<<<<<<") || !upstream.includes("export const Chaython") && !upstream.includes('Chaython: { name: "Chaython"')) {
+              throw new Error("EquicordPlus constants merge validation failed");
+          }
+          fs.writeFileSync(process.argv[2], upstream);
+          NODE
+          MERGE
+          chmod +x /tmp/equicordplus-merge-constants.sh
+          git config merge.equicordplus-constants.driver "/tmp/equicordplus-merge-constants.sh %O %A %B"
+
           git remote add upstream https://github.com/Equicord/Equicord.git
           git fetch --no-tags upstream main
 
