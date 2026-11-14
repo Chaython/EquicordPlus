@@ -6,6 +6,7 @@
 
 import { Devs } from "@utils/constants";
 import definePlugin from "@utils/types";
+import { FluxDispatcher } from "@webpack/common";
 
 export default definePlugin({
     name: "WebScreenShareFixes",
@@ -13,6 +14,20 @@ export default definePlugin({
     description: "Fixes Chromium/Vesktop screen sharing: restores 10 Mbps video startup bandwidth, raises Go Live bitrate limits, and prevents preview CPU growth.",
     tags: ["Voice"],
     enabledByDefault: true,
+    start() {
+        FluxDispatcher.dispatch({
+            type: "EXPERIMENT_OVERRIDE_BUCKET",
+            experimentId: "2026-10-web-screen-share-audio",
+            experimentBucket: 1,
+        });
+    },
+    stop() {
+        FluxDispatcher.dispatch({
+            type: "EXPERIMENT_OVERRIDE_BUCKET",
+            experimentId: "2026-10-web-screen-share-audio",
+            experimentBucket: null,
+        });
+    },
 
     patches: [
         {
@@ -23,10 +38,6 @@ export default definePlugin({
                     // Restore the previous 10 Mbps startup bitrate while retaining
                     // the existing adaptive WebRTC estimator and Go Live limits.
                     replace: '"x-google-min-bitrate=1000;x-google-start-bitrate=10000;x-google-max-bitrate=80000"'
-                },
-                {
-                    match: /;usedtx=\$\{(\i)\?"0":"1"\}/,
-                    replace: '$&${$1?";stereo=1;sprop-stereo=1":""}'
                 },
             ]
         },
@@ -47,7 +58,7 @@ export default definePlugin({
         {
             find: "ApplicationStreamPreviewUploadManager",
             replacement: {
-                match: /removeAttribute\("srcObject"\)(?<=(\i)\..+?)/,
+                match: /removeAttribute\("srcObject"\)(?<=(i)\..+?)/,
                 replace: "pause(),$1.srcObject=null"
             }
         }

@@ -275,7 +275,7 @@ export default definePlugin({
                 },
                 {
                     // QUESTS_FETCH_QUEST_TO_DELIVER_BEGIN
-                    match: /(?=let \i=Date.now\(\),\i=\i.recordQuestRequestAttempt.{0,50}QUESTS_FETCH_QUEST_TO_DELIVER_BEGIN)/,
+                    match: /(?=let [^;]+\.recordQuestRequestAttempt\()/,
                     replace: "return;"
                 }
             ]
@@ -487,7 +487,7 @@ export default definePlugin({
             replacement: [
                 {
                     // Subscribes each Quest tile to Questify's manual rerender trigger.
-                    match: /(?=return\(0,\i\.\i\)\("article",\{id:)/,
+                    match: /(?=return\(0,\i\.\i\)\(\i\.\i,\{value:)/,
                     replace: "void $self.useQuestRerender();"
                 },
                 {

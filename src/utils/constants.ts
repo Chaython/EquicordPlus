@@ -739,9 +739,9 @@ export const Devs = /* #__PURE__*/ Object.freeze({
 } satisfies Record<string, Dev>);
 
 export const EquicordDevs = Object.freeze({
+    Benjii: { name: "Benjii", id: 463702169443368970n },
     // EquicordPlus maintainer and author of maintained fork plugins.
     Chaython: { name: "Chaython", id: 0n },
-    Benjii: { name: "Benjii", id: 463702169443368970n },
     lethied: {
         name: "lethied",
         id: 892246841016590386n
@@ -1568,4 +1568,3 @@ export const TestcordDevsById = /* #__PURE__*/ (() =>
             .map(([_, v]) => [v.id, v] as const)
     ))
 )() as Record<string, Dev>;
-
