@@ -229,18 +229,17 @@ jobs:
           # Keep upstream source lint strict while excluding maintained fork
           # plugins with legacy lint debt and the local merge helpers.
           pnpm lint --ignore-pattern 'src/userplugins/**' --ignore-pattern 'scripts/mergePackageJson.mjs' --ignore-pattern 'scripts/mergePnpmWorkspace.mjs' --ignore-pattern 'scripts/merge-constants.js'
-          # Format workflows, package.json and other maintained files, then
-          # verify formatting is clean. Restore workflows afterwards so the
-          # fork-managed Actions files are not rewritten by the sync.
-          pnpm exec oxfmt .github/workflows/sync-upstream-release.yml .github/workflows/publish.yml .github/workflows/reportBrokenPlugins.yml package.json src/userplugins/passwordManager/styles.css
-          pnpm fmt:check
+          # Format maintained files (workflows, package.json, workspace, stylesheet).
+          # oxfmt rewrites in place; workflows are restored below so the sync
+          # does not rewrite fork-managed Actions files.
+          pnpm exec oxfmt .github/workflows/sync-upstream-release.yml .github/workflows/publish.yml .github/workflows/reportBrokenPlugins.yml pnpm-workspace.yaml package.json src/userplugins/passwordManager/styles.css
           # Upstream CSS currently has 37 pre-existing Stylelint violations under
           # the fork's preserved config. Validate the maintained fork stylesheet
           # here without rewriting unrelated upstream plugin CSS.
           pnpm exec stylelint src/userplugins/passwordManager/styles.css
           pnpm lint:intl
           pnpm lint:patches
-          # Formatting is checked against the normalized workflow files above,
+          # Formatting is normalized on the maintained files above,
           # but keep fork-managed Actions files unchanged in the pushed commit.
           git restore --source="${GITHUB_SHA}" -- .github/workflows
 
