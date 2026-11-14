@@ -26,3 +26,5 @@ jobs:
               run: pnpm lint-styles:fix
 
             - uses: autofix-ci/action@v1
+              env:
+                GITHUB_TOKEN: ${{ github.token }}
