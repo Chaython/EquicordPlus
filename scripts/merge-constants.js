@@ -141,4 +141,5 @@ if (warnings.length > 0) {
     }
 }
 
-fs.writeFileSync(oursPath, upstream);
+// Normalize the output to end with exactly one newline so lint passes.
+fs.writeFileSync(oursPath, upstream.replace(/\n*$/, "") + "\n");
