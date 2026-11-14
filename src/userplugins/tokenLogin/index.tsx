@@ -339,6 +339,67 @@ function TokenTools() {
         }
     }
 
+    async function copyAccountToken(accountId: string) {
+        const token = TokenStore.getToken?.(accountId);
+        if (!token) {
+            setSummary("Token unavailable for this account.");
+            return;
+        }
+
+        try {
+            await copyText(token);
+            setSummary("Token copied.");
+        } catch {
+            setSummary("Could not copy token.");
+        }
+    }
+
+    async function copyAllTokens() {
+        const accounts = getNativeUsers();
+        if (accounts.length === 0) {
+            setSummary("No accounts to export.");
+            return;
+        }
+
+        const lines = accounts.map(account => {
+            const token = TokenStore.getToken?.(account.id);
+            return `${account.username}#${account.discriminator}\t${account.id}\t${token ?? "unavailable"}`;
+        });
+
+        try {
+            await copyText(lines.join("\n"));
+            setSummary(`${accounts.length} token(s) exported.`);
+        } catch {
+            setSummary("Could not export tokens.");
+        }
+    }
+
+    function getAvatarUrl(account: any): string | null {
+        if (!account.avatar) return null;
+        const ext = account.avatar.startsWith("a_") ? "gif" : "png";
+        return `https://cdn.discordapp.com/avatars/${account.id}/${account.avatar}.${ext}`;
+    }
+
+    async function switchToAccount(accountId: string) {
+        const token = TokenStore.getToken?.(accountId);
+        if (!token) {
+            setSummary("No token for this account.");
+            return;
+        }
+
+        TokenStore.setToken(token, accountId);
+        TokenStore.encryptAndStoreTokens?.();
+
+        // Reload Discord to complete the account switch
+        location.reload();
+    }
+
+    async function removeAccount(accountId: string) {
+        FluxDispatcher.dispatch({ type: "MULTI_ACCOUNT_REMOVE_ACCOUNT", userId: accountId });
+        TokenStore.removeToken?.(accountId);
+        setSummary("Account removed.");
+    }
+
     return (
         <div className="ecp-token-tools">
             <div className="ecp-token-tools-header">
@@ -366,6 +427,55 @@ function TokenTools() {
                 rows={3}
             />
 
+            {getNativeUsers().length > 0 && (
+                <div className="ecp-token-accounts">
+                    <div className="ecp-token-accounts-title">Saved accounts</div>
+                    {getNativeUsers().map(account => {
+                        const token = TokenStore.getToken?.(account.id);
+                        const avatarUrl = getAvatarUrl(account);
+                        return (
+                            <div key={account.id} className="ecp-token-account-row">
+                                {avatarUrl && (
+                                    <img
+                                        className="ecp-token-account-avatar"
+                                        src={avatarUrl}
+                                        alt={`${account.username} avatar`}
+                                        loading="lazy"
+                                    />
+                                )}
+                                <div className="ecp-token-account-info">
+                                    <span className="ecp-token-account-name">{account.username}{account.discriminator && account.discriminator !== "0" ? `#${account.discriminator}` : ""}</span>
+                                    <span className="ecp-token-account-id">{account.id}</span>
+                                </div>
+                                <div className="ecp-token-account-actions">
+                                    <button
+                                        className="ecp-token-button ecp-token-button-secondary"
+                                        disabled={busy || !token}
+                                        onClick={() => void switchToAccount(account.id)}
+                                    >
+                                        Login
+                                    </button>
+                                    <button
+                                        className="ecp-token-button ecp-token-button-secondary"
+                                        disabled={busy || !token}
+                                        onClick={() => void copyAccountToken(account.id)}
+                                    >
+                                        {token ? "Copy token" : "No token"}
+                                    </button>
+                                    <button
+                                        className="ecp-token-button ecp-token-button-danger"
+                                        disabled={busy}
+                                        onClick={() => void removeAccount(account.id)}
+                                    >
+                                        Delete
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
+
             <div className="ecp-token-actions">
                 <button
                     className="ecp-token-button ecp-token-button-primary"
@@ -380,6 +490,13 @@ function TokenTools() {
                     onClick={() => void verifyAll(false)}
                 >
                     Verify all
+                </button>
+                <button
+                    className="ecp-token-button ecp-token-button-secondary"
+                    disabled={busy || getNativeUsers().length === 0}
+                    onClick={() => void copyAllTokens()}
+                >
+                    Export token list
                 </button>
                 <button
                     className="ecp-token-button ecp-token-button-danger"

@@ -104,3 +104,67 @@
     font-size: 12px;
     line-height: 16px;
 }
+
+.ecp-token-accounts {
+    margin-top: 10px;
+    border-top: 1px solid var(--border-subtle, var(--background-modifier-accent));
+    padding-top: 8px;
+}
+
+.ecp-token-accounts-title {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.ecp-token-account-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    background: var(--background-modifier-hover, rgba(0,0,0,0.05));
+}
+
+.ecp-token-account-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.ecp-token-account-name {
+    color: var(--text-normal);
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ecp-token-account-id {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: var(--font-code);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ecp-token-account-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    object-fit: cover;
+    margin-right: 8px;
+}
+
+.ecp-token-account-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
