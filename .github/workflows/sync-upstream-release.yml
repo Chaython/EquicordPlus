@@ -302,30 +302,24 @@ jobs:
           rm -rf release
           mkdir -p release
 
-          find dist -maxdepth 1 -type f \
-            \( -name '*.zip' -o -name '*.asar' \) \
-            -exec cp -f {} release/ \;
-
-          if [ -d "dist/browser" ]; then
-            find dist/browser -maxdepth 1 -type f \
-              -name 'browser.*' \
-              -exec cp -f {} release/ \;
+          # Desktop app (packaged as asar) -> desktop.zip
+          if [ -f "dist/desktop.asar" ]; then
+            ( cd dist && zip -9 -q -r "../release/desktop.zip" desktop.asar )
           fi
 
-          find dist -maxdepth 1 -type f \
-            -name 'Equicord.user.*' \
-            -exec cp -f {} release/ \;
+          # Equibop app (packaged as asar) -> equibop.zip
+          if [ -f "dist/equibop.asar" ]; then
+            ( cd dist && zip -9 -q -r "../release/equibop.zip" equibop.asar )
+          fi
 
-          find dist -maxdepth 1 -type f \
-            -name '*.json' \
-            -exec cp -f {} release/ \;
+          # Equicord user script -> Equicord.user.zip
+          if [ -f "dist/Equicord.user.js" ]; then
+            ( cd dist && zip -9 -q -r "../release/Equicord.user.zip" Equicord.user.js )
+          fi
 
-          (
-            cd dist
-            zip -9 -q -r \
-              "../release/EquicordPlus-dist-v${VERSION}-${SHORT_SHA}.zip" \
-              .
-          )
+          # Browser extensions -> extension-chrome.zip / extension-firefox.zip
+          cp -f dist/extension-chrome.zip release/extension-chrome.zip 2>/dev/null || true
+          cp -f dist/extension-firefox.zip release/extension-firefox.zip 2>/dev/null || true
 
           if [ -z "$(ls -A release)" ]; then
             echo "::error::No release files were generated."
