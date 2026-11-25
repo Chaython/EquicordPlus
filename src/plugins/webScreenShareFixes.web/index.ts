@@ -105,11 +105,11 @@ export default definePlugin({
                 },
                 {
                     // Keep EquicordPlus's 80 Mbps Go Live ceiling and 20 Mbps target.
-                    match: /(\\i)=35e5,(\\i)=9e6,(?=\\i=\\["remoteSinkWantsPixelCount")/,
+                    match: /(\i)=35e5,(\i)=9e6,(?=\i=\\["remoteSinkWantsPixelCount")/,
                     replace: "$1=35e5,$2=8e7,"
                 },
                 {
-                    match: /desktopBitrate:\\{min:5e5,max:35e5,target:6e5\\}/,
+                    match: /desktopBitrate:\{min:5e5,max:35e5,target:6e5\}/,
                     replace: "desktopBitrate:{min:5e5,max:8e7,target:2e7}"
                 },
                 {
