@@ -106,7 +106,7 @@ jobs:
           # fork versions for these exact paths and complete the merge.
           if [ "$MERGE_STATUS" -ne 0 ]; then
             CONFLICTS="$(git diff --name-only --diff-filter=U | sort)"
-            EXPECTED_CONFLICTS="$(printf '%s\\n' \
+            EXPECTED_CONFLICTS="$(printf '%s\n' \
               'src/plugins/webScreenShare.browser/index.tsx' \
               'src/plugins/webScreenShareFixes.web/index.ts' | sort)"
 
