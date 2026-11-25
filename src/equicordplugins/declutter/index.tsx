@@ -17,11 +17,7 @@ import { classNameFactory } from "@utils/css";
 import definePlugin, { OptionType } from "@utils/types";
 
 migratePluginSetting("Declutter", "removeShopAboveDms", "removeShopAboveDM");
-migratePluginSetting(
-    "Declutter",
-    "removeQuestsAboveDms",
-    "removeQuestsAboveDM",
-);
+migratePluginSetting("Declutter", "removeQuestsAboveDms", "removeQuestsAboveDM");
 
 const cl = classNameFactory("vc-declutter-");
 
@@ -32,8 +28,7 @@ export const settings = definePluginSettings({
     },
     removeAvatarDecoration: {
         type: OptionType.BOOLEAN,
-        description:
-            "Remove avatar decorations. This is/will be disabled if Decor is enabled.",
+        description: "Remove avatar decorations. This is/will be disabled if Decor is enabled.",
         default: false,
         disabled: () => isPluginEnabled("Decor"),
         restartNeeded: true,
@@ -78,8 +73,7 @@ export const settings = definePluginSettings({
         type: OptionType.COMPONENT,
         component: () => (
             <Notice.Info className={cl("accessibility-notice")}>
-                Discord already has a built-in username style option in
-                Accessibility settings.
+                Discord already has a built-in username style option in Accessibility settings.
             </Notice.Info>
         ),
     },
@@ -151,6 +145,24 @@ export const settings = definePluginSettings({
         default: false,
         restartNeeded: true,
     },
+    removeAccountPopoutBadges: {
+        type: OptionType.BOOLEAN,
+        description: "Remove badges from the account popout.",
+        default: false,
+        restartNeeded: true,
+    },
+    removeAccountPopoutOrbs: {
+        type: OptionType.BOOLEAN,
+        description: "Remove orbs from the account popout.",
+        default: false,
+        restartNeeded: true,
+    },
+    removeInvisibleWarning: {
+        type: OptionType.BOOLEAN,
+        description: "Remove the invisible status warning from the account popout.",
+        default: false,
+        restartNeeded: true,
+    },
 });
 
 function SectionSeparator(title: string) {
@@ -192,9 +204,7 @@ export default definePlugin({
                 match: /(?<=\{avatarDecoration:.{0,40}?)(void 0!==\i\?\i:)\i(?=\)?,canAnimate:)/,
                 replace: "$1null",
             },
-            predicate: () =>
-                settings.store.removeAvatarDecoration &&
-                !isPluginEnabled(decor.name),
+            predicate: () => settings.store.removeAvatarDecoration && !isPluginEnabled(decor.name),
         },
         {
             // Avatar decoration on dms list
@@ -203,9 +213,7 @@ export default definePlugin({
                 match: /null==\i\|\|\i\?null:\(0,\i\.jsxs?\)\("img",\{className:\i\.\i,src:\i,alt:" ","aria-hidden":!0\}\)/,
                 replace: "null",
             },
-            predicate: () =>
-                settings.store.removeAvatarDecoration &&
-                !isPluginEnabled(decor.name),
+            predicate: () => settings.store.removeAvatarDecoration && !isPluginEnabled(decor.name),
         },
         // User Area
         {
@@ -215,8 +223,7 @@ export default definePlugin({
                     match: /((\i)=\i\?\.avatarDecoration,\i=)\(0,\i\.\i\)\(\2\)/,
                     replace: "$1null",
                     predicate: () =>
-                        settings.store.removeAvatarDecoration &&
-                        !isPluginEnabled(decor.name),
+                        settings.store.removeAvatarDecoration && !isPluginEnabled(decor.name),
                 },
                 {
                     match: /(iconForeground:null!=\i\?\i\.\i:void 0,nameplate:)\i/g,
@@ -237,6 +244,15 @@ export default definePlugin({
                 match: /function \i\((\i)\)\{(?=let.{0,5}\{nameplate:\i,)/,
                 replace:
                     '$&if($1.placement!=="preview"&&$1.placement!=="mini_preview")return null;',
+            },
+            predicate: () => settings.store.removeNameplate,
+        },
+        {
+            // Nameplate palette
+            find: ',darkBackground:"",lightBackground:""',
+            replacement: {
+                match: /(?<=lightBackground:""\},.{0,5},\i:)\i/,
+                replace: "{}",
             },
             predicate: () => settings.store.removeNameplate,
         },
@@ -285,6 +301,27 @@ export default definePlugin({
                 replace: "hoverText:$1,forceHover:!0,children:",
             },
             predicate: () => settings.store.alwaysShowUsername,
+        },
+        {
+            // Account popout
+            find: "#{intl::L99HQm::raw}",
+            replacement: [
+                {
+                    match: /(?=\i&&\(0,\i\.jsxs?\)\(\i,\{action:"PRESS_VIEW_BADGES")/,
+                    replace: "false&&",
+                    predicate: () => settings.store.removeAccountPopoutBadges,
+                },
+                {
+                    match: /(?=\i&&\(0,\i\.jsxs?\)\(\i,\{popoutContainerRef:\i,scrollerRef:)/,
+                    replace: "false&&",
+                    predicate: () => settings.store.removeAccountPopoutOrbs,
+                },
+                {
+                    match: /(?=\i\.length>0&&\i&&\(0,\i\.jsxs?\)\(\i\.\i,\{text:\i\.intl\.string\(\i\.t#{intl::L99HQm::raw}\))/,
+                    replace: "false&&",
+                    predicate: () => settings.store.removeInvisibleWarning,
+                },
+            ],
         },
         {
             // Button tooltips in user area

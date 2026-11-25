@@ -32,7 +32,7 @@ import { canOpenDevToolsWindow, fetchAndDispatchQuests, openDevToolsWindow, snak
 import { normalizeQuestName } from "./utils/filtering";
 import { notifyQuestCompletion, QL } from "./utils/logging";
 import { getQuestEmbedProgress, getQuestPanelOverride, getQuestPanelPercentComplete, shouldForceQuestPanelVisible } from "./utils/questState";
-import { getLastFilterChoices, getLastSortChoice, getQuestTileClasses, getQuestTileStyle, setLastFilterChoices, setLastSortChoice, shouldPreloadQuestAssets, sortQuests } from "./utils/questTiles";
+import { getLastFilterChoices, getLastSortChoice, getQuestClaimDeadlineText, getQuestTileClasses, getQuestTileStyle, setLastFilterChoices, setLastSortChoice, shouldPreloadQuestAssets, sortQuests } from "./utils/questTiles";
 import { QUEST_PAGE } from "./utils/ui";
 
 let isPluginStarted = false;
@@ -148,6 +148,7 @@ export default definePlugin({
     getQuestAutoCompleteProgress,
     getQuestEmbedProgress,
     getQuestButtonProps,
+    getQuestClaimDeadlineText,
     getQuestPanelOverride,
     getQuestPanelPercentComplete,
     getQuestPanelSubtitleText,
@@ -481,18 +482,34 @@ export default definePlugin({
             ]
         },
         {
+            // Show the reward claim deadline on completed, unclaimed Quest Home cards.
+            find: "questNameHeadingId",
+            group: true,
+            predicate: () => !getQuestifySettings().disableQuestsEverything,
+            replacement: [
+                {
+                    match: /(?=let{quest:\i,isHovering)/,
+                    replace: "let questifyClaimDeadline=$self.getQuestClaimDeadlineText(arguments[0].quest);"
+                },
+                {
+                    match: /(?<=gamePublisher}\)\]}\),)(\i)(.{0,80}?children:)(?=\i\.intl\.format\(\i\.\i#{intl::QUESTS_TILE_BANNER_ENDS_DATE})/,
+                    replace: "($1&&questifyClaimDeadline==null)$2questifyClaimDeadline??"
+                }
+            ]
+        },
+        {
             find: "questNameHeadingId",
             group: true,
             predicate: () => !getQuestifySettings().disableQuestsEverything,
             replacement: [
                 {
                     // Subscribes each Quest tile to Questify's manual rerender trigger.
-                    match: /(?=return\(0,\i\.\i\)\(\i\.\i,\{value:)/,
+                    match: /(?=return\(0,\i\.\i\)\(\i\.\i\.Provider,\{value:)/,
                     replace: "void $self.useQuestRerender();"
                 },
                 {
                     // Adds Questify tile classes and inline CSS variables.
-                    match: /(?<=className:)(\i\(\)\(\i\.\i,\i\))(?=,onMouseEnter)/,
+                    match: /(?<=className:)(\i\(\)\(\i\.\i,\i,.{1,40}?\))(?=,onMouseEnter)/,
                     replace: "$self.getQuestTileClasses($1,arguments[0].quest),style:$self.getQuestTileStyle(arguments[0].quest)"
                 },
                 {
