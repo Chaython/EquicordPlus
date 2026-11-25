@@ -163,13 +163,14 @@ function isBlockedUrl(url: string): boolean {
 }
 
 function stripReferrer(init: RequestInit | undefined): RequestInit {
-    if (!settings.store.stripThirdPartyReferrers) return init;
+    if (!settings.store.stripThirdPartyReferrers) return init ?? {};
     return { ...init, referrer: "", referrerPolicy: "no-referrer" };
 }
 
 function patchFetch() {
     if (fetchPatched) return;
-    originalFetch = window.fetch;
+    const original = window.fetch;
+    originalFetch = original;
 
     const patchedFetch: typeof window.fetch = async (input, init) => {
         try {
@@ -184,9 +185,9 @@ function patchFetch() {
             }
 
             const patchedInit = stripReferrer(init);
-            return originalFetch.call(window, input as RequestInfo, patchedInit);
+            return original.call(window, input as RequestInfo, patchedInit);
         } catch {
-            return originalFetch.call(window, input as RequestInfo, init);
+            return original.call(window, input as RequestInfo, init);
         }
     };
 
@@ -380,7 +381,7 @@ export default definePlugin({
     name: "HardenedDiscord",
     description: "Consolidated privacy & hardening: WebRTC relay-only, invisible-character sanitizer, and DiscordHardening toggles.",
     authors: [],
-    tags: ["Privacy", "Security"],
+    tags: ["Privacy"],
     settings,
     enabledByDefault: false,
 
@@ -407,10 +408,10 @@ export default definePlugin({
         // ---- ZeroWidthSanitizer ----
         if (settings.store.zeroWidthSanitizer) {
             if (settings.store.sanitizeOutgoing) {
-                addMessagePreSendListener(preSendListener);
+                addMessagePreSendListener(preSendListener!);
             }
             if (settings.store.sanitizeEdits) {
-                addMessagePreEditListener(preEditListener);
+                addMessagePreEditListener(preEditListener!);
             }
         }
 
