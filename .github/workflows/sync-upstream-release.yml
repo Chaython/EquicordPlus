@@ -99,6 +99,30 @@ jobs:
           MERGE_STATUS=$?
           set -e
 
+          # These two files were manually reconciled with upstream's current
+          # implementations while retaining EquicordPlus's 4K/120 FPS and
+          # high-bitrate customizations. Git still reports textual conflicts
+          # because both branches edited the same sections; keep the reviewed
+          # fork versions for these exact paths and complete the merge.
+          if [ "$MERGE_STATUS" -ne 0 ]; then
+            CONFLICTS="$(git diff --name-only --diff-filter=U | sort)"
+            EXPECTED_CONFLICTS="$(printf '%s\\n' \
+              'src/plugins/webScreenShare.browser/index.tsx' \
+              'src/plugins/webScreenShareFixes.web/index.ts' | sort)"
+
+            if [ "$CONFLICTS" = "$EXPECTED_CONFLICTS" ]; then
+              echo "Resolving the two reviewed screen-share conflicts with the reconciled EquicordPlus versions."
+              git checkout --ours -- \
+                src/plugins/webScreenShare.browser/index.tsx \
+                src/plugins/webScreenShareFixes.web/index.ts
+              git add \
+                src/plugins/webScreenShare.browser/index.tsx \
+                src/plugins/webScreenShareFixes.web/index.ts
+              git -c core.editor=true merge --continue
+              MERGE_STATUS=0
+            fi
+          fi
+
           if [ "$MERGE_STATUS" -ne 0 ]; then
             echo "::error::Equicord upstream could not be merged automatically."
 
